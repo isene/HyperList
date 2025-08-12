@@ -1,4 +1,4 @@
-# HyperList Ruby TUI
+# HyperList TUI
 
 <img src="hyperlist_logo.svg" align="left" width="150" height="150">
 
