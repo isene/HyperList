@@ -1,0 +1,3874 @@
+#!/usr/bin/env ruby
+# encoding: utf-8
+
+# HyperList TUI - A terminal interface for HyperList files
+# Based on hyperlist.vim by Geir Isene
+
+# Check for help/version BEFORE loading any libraries
+if ARGV[0] == '-h' || ARGV[0] == '--help'
+  puts <<~HELP
+    HyperList v1.0.1 - Terminal User Interface for HyperList files
+    
+    USAGE
+      hyperlist [OPTIONS] [FILE]
+      
+    OPTIONS
+      -h, --help     Show this help message
+      -v, --version  Show version information
+      
+    ARGUMENTS
+      FILE           Optional HyperList file to open (.hl extension)
+                     If not provided, starts with a new empty HyperList
+      
+    EXAMPLES
+      hyperlist                  Start with a new HyperList
+      hyperlist todo.hl          Open todo.hl
+      hyperlist ~/lists/work.hl  Open work.hl from home directory
+      
+    KEY COMMANDS
+      ?              Show key bindings help
+      ??             Show full HyperList documentation
+      q              Quit (with save prompt if modified)
+      :w             Save file
+      :q             Quit
+      :wq            Save and quit
+      
+    FEATURES
+      • Full HyperList syntax support with color highlighting
+      • Folding/expanding of hierarchical items
+      • Search and navigation
+      • Checkboxes with date tracking
+      • Templates for common list structures
+      • Macro recording and playback
+      • Split view for working with multiple sections
+      • Export to Markdown, HTML, plain text, and PNG graphs
+      • Auto-save capability
+      • Multi-level undo
+      • Vim-style marks and jumping
+      
+    For more information and HyperList documentation, visit:
+      https://github.com/isene/hyperlist
+      
+  HELP
+  exit 0
+elsif ARGV[0] == '-v' || ARGV[0] == '--version'
+  puts "HyperList v1.0.1"
+  exit 0
+end
+
+# Only load libraries if we're actually running the app
+require 'io/console'
+require 'date'
+require 'rcurses'
+require 'cgi'
+
+class HyperListApp
+  include Rcurses
+  include Rcurses::Input
+  include Rcurses::Cursor
+  
+  VERSION = "1.0.1"
+  
+  def initialize(filename = nil)
+    @filename = filename ? File.expand_path(filename) : nil
+    @items = []
+    @current = 0
+    @offset = 0
+    @modified = false
+    @mode = :normal
+    @message = ""
+    @search = ""
+    @search_matches = []  # Track search match positions
+    @fold_level = 99
+    @clipboard = nil
+    @undo_stack = []
+    @undo_position = []  # Stack of cursor positions for undo
+    @redo_stack = []
+    @redo_position = []  # Stack of cursor positions for redo
+    @last_action = nil  # Store the last editing action for '.' repeat
+    @last_action_type = nil  # Type of last action
+    @processed_cache = {}  # Cache for processed text
+    @presentation_mode = false  # Presentation mode flag
+    @last_key = nil  # Track last key for double-key combos
+    @last_rendered_lines = []  # Track last rendered lines
+    @recent_files_path = File.expand_path("~/.hyperlist_recent")
+    @auto_save_enabled = false
+    @auto_save_interval = 60  # seconds
+    @last_auto_save = Time.now
+    @templates = load_templates
+    @macro_recording = false
+    @macro_register = {}  # Store macros by key
+    @macro_buffer = []  # Current macro being recorded
+    @macro_key = nil  # Key for current macro
+    @split_view = false
+    @split_items = []  # Second view items
+    @split_current = 0  # Second view cursor
+    @split_offset = 0  # Second view scroll offset
+    @active_pane = :main  # :main or :split
+    @message_timeout = nil  # For timed message display
+    
+    # Terminal setup
+    if IO.console
+      @rows, @cols = IO.console.winsize
+    else
+      @rows = ENV['LINES']&.to_i || 24
+      @cols = ENV['COLUMNS']&.to_i || 80
+    end
+    
+    # Debug: uncomment to see terminal size
+    # puts "Terminal size: #{@rows}x#{@cols}"
+    
+    # Load file if provided
+    if @filename && File.exist?(@filename)
+      load_file(@filename)
+    else
+      # Start with empty list
+      @items = [{"text" => "New HyperList", "level" => 0, "fold" => false}]
+    end
+    
+    setup_ui
+  end
+  
+  def setup_ui
+    Rcurses.clear_screen
+    Cursor.hide
+    
+    # Ensure we have the latest terminal size
+    if IO.console
+      @rows, @cols = IO.console.winsize
+    else
+      @rows = ENV['LINES']&.to_i || 24
+      @cols = ENV['COLUMNS']&.to_i || 80
+    end
+    
+    if @split_view
+      # Split view layout - no header, more space for content
+      split_width = @cols / 2
+      # Main content panes - full height minus 1 for footer
+      @main = Pane.new(0, 0, split_width - 1, @rows - 1, 15, 0)
+      @split_pane = Pane.new(split_width + 1, 0, split_width - 1, @rows - 1, 15, 0)
+      # Footer: Use @rows for y-position (this puts it at the actual bottom)
+      @footer = Pane.new(0, @rows, @cols, 1, 15, 8)
+      
+      # Add separator
+      @separator = Pane.new(split_width, 0, 1, @rows - 1, 15, 8)
+      @separator.text = "│" * (@rows - 1)
+      @separator.refresh
+    else
+      # Single view layout - no header, more space for content
+      # Main pane uses full height minus 1 for footer
+      @main = Pane.new(0, 0, @cols, @rows - 1, 15, 0)
+      # Footer: Use @rows for y-position (this puts it at the actual bottom)
+      @footer = Pane.new(0, @rows, @cols, 1, 15, 8)
+    end
+  end
+  
+  def load_file(file)
+    @items = []
+    lines = File.readlines(file) rescue []
+    
+    # Clear undo/redo stacks when loading a new file
+    @undo_stack = []
+    @undo_position = []
+    @redo_stack = []
+    @redo_position = []
+    
+    # Check if file is large
+    large_file = lines.length > 10000
+    
+    if large_file
+      @message = "Loading large file (#{lines.length} lines)..."
+      render_footer
+    end
+    
+    # Process lines with optional progress updates for large files
+    lines.each_with_index do |line, idx|
+      next if line.strip.empty?
+      level = line[/^\t*/].length
+      text = line.strip
+      @items << {"text" => text, "level" => level, "fold" => false}
+      
+      # Update progress for large files
+      if large_file && idx % 1000 == 0
+        progress = (idx.to_f / lines.length * 100).to_i
+        @message = "Loading... #{progress}%"
+        render_footer
+      end
+    end
+    
+    @items = [{"text" => "Empty file", "level" => 0, "fold" => false}] if @items.empty?
+    
+    # Auto-fold deep levels for large files
+    if large_file
+      auto_fold_deep_levels(3)  # Auto-fold everything deeper than level 3
+      @message = "Large file loaded. Deep levels auto-folded for performance."
+    end
+    
+    # Update recent files list
+    add_to_recent_files(File.expand_path(file)) if file
+  end
+  
+  def auto_fold_deep_levels(max_level)
+    @items.each_with_index do |item, idx|
+      if item["level"] >= max_level && has_children?(idx, @items)
+        item["fold"] = true
+      end
+    end
+  end
+  
+  def add_to_recent_files(filepath)
+    return unless filepath && File.exist?(filepath)
+    
+    # Load existing recent files
+    recent = load_recent_files
+    
+    # Remove if already exists and add to front
+    recent.delete(filepath)
+    recent.unshift(filepath)
+    
+    # Keep only last 20 files
+    recent = recent[0...20]
+    
+    # Save back to file
+    File.open(@recent_files_path, 'w') do |f|
+      recent.each { |path| f.puts(path) }
+    end
+  rescue => e
+    # Silently fail if can't write recent files
+  end
+  
+  def load_recent_files
+    return [] unless File.exist?(@recent_files_path)
+    
+    File.readlines(@recent_files_path).map(&:strip).select do |path|
+      File.exist?(path)
+    end
+  rescue
+    []
+  end
+  
+  def show_recent_files
+    recent = load_recent_files
+    
+    if recent.empty?
+      @message = "No recent files"
+      return
+    end
+    
+    # Save current state
+    saved_items = @items.dup
+    saved_current = @current
+    saved_offset = @offset
+    saved_filename = @filename
+    saved_modified = @modified
+    
+    # Create items for recent files display
+    @items = []
+    @items << {"text" => "RECENT FILES (press Enter to open, q to cancel)", "level" => 0, "fold" => false, "raw" => true}
+    @items << {"text" => "="*50, "level" => 0, "fold" => false, "raw" => true}
+    
+    recent.each_with_index do |path, idx|
+      display_path = path.sub(ENV['HOME'], '~') if ENV['HOME']
+      display_path ||= path
+      @items << {"text" => "#{idx+1}. #{display_path}", "level" => 0, "fold" => false, "path" => path, "raw" => true}
+    end
+    
+    @current = 2  # Start at first file
+    @offset = 0
+    @modified = false
+    
+    # Recent files viewer loop
+    loop do
+      render_main
+      @footer.text = "Recent Files | Enter: open | q: cancel | j/k: navigate"
+      @footer.refresh
+      
+      c = getchr
+      case c
+      when "q", "ESC"
+        # Restore original state
+        @items = saved_items
+        @current = saved_current
+        @offset = saved_offset
+        @filename = saved_filename
+        @modified = saved_modified
+        break
+      when "j", "DOWN"
+        move_down if @current < @items.length - 1
+      when "k", "UP"
+        move_up if @current > 2  # Don't go above first file
+      when "ENTER", "l"
+        if @current >= 2 && @items[@current]["path"]
+          selected_file = @items[@current]["path"]
+          if saved_modified
+            @items = saved_items
+            @current = saved_current
+            @offset = saved_offset
+            @filename = saved_filename
+            @modified = saved_modified
+            @message = "Unsaved changes! Save first before opening another file"
+            break
+          else
+            @filename = File.expand_path(selected_file)
+            load_file(@filename)
+            @current = 0
+            @offset = 0
+            @modified = false
+            break
+          end
+        end
+      when /^[1-9]$/
+        # Allow number key selection
+        idx = c.to_i - 1
+        if idx < recent.length
+          selected_file = recent[idx]
+          if saved_modified
+            @items = saved_items
+            @current = saved_current
+            @offset = saved_offset
+            @filename = saved_filename
+            @modified = saved_modified
+            @message = "Unsaved changes! Save first before opening another file"
+            break
+          else
+            @filename = File.expand_path(selected_file)
+            load_file(@filename)
+            @current = 0
+            @offset = 0
+            @modified = false
+            break
+          end
+        end
+      end
+    end
+  end
+  
+  def save_file
+    return unless @filename
+    
+    File.open(@filename, 'w') do |f|
+      @items.each do |item|
+        f.puts("\t" * item["level"] + item["text"])
+      end
+    end
+    @modified = false
+    @message = "Saved to #{@filename}"
+    @last_auto_save = Time.now if @auto_save_enabled
+  end
+  
+  def check_auto_save
+    return unless @filename && @modified
+    
+    if Time.now - @last_auto_save >= @auto_save_interval
+      save_file
+      @message = "Auto-saved to #{@filename}"
+      @last_auto_save = Time.now
+    end
+  end
+  
+  def export_to(format, export_file = nil)
+    # Generate default filename if not provided
+    if export_file.nil? || export_file.empty?
+      base = @filename ? File.basename(@filename, '.*') : 'hyperlist'
+      extension = case format
+                  when 'md', 'markdown' then '.md'
+                  when 'html' then '.html'
+                  when 'txt', 'text' then '.txt'
+                  end
+      export_file = base + extension
+    end
+    
+    content = case format
+              when 'md', 'markdown'
+                export_to_markdown
+              when 'html'
+                export_to_html
+              when 'txt', 'text'
+                export_to_text
+              end
+    
+    File.open(export_file, 'w') { |f| f.write(content) }
+    @message = "Exported to #{export_file}"
+  rescue => e
+    @message = "Export failed: #{e.message}"
+  end
+  
+  def export_to_markdown
+    lines = []
+    @items.each do |item|
+      text = item["text"]
+      level = item["level"]
+      
+      # Convert HyperList bold/italic to Markdown format
+      # In HyperList: *text* is bold, /text/ is italic, _text_ is underline
+      # In Markdown: **text** is bold, *text* is italic, no standard underline
+      
+      # First, temporarily replace escaped characters to avoid conflicts
+      text = text.gsub('\\*', '\u0001')
+                 .gsub('\\/', '\u0002')
+                 .gsub('\\_', '\u0003')
+      
+      # Convert HyperList formatting to Markdown
+      # Bold: *text* -> **text**
+      text = text.gsub(/\*([^*]+)\*/, '**\1**')
+      
+      # Italic: /text/ -> *text*
+      text = text.gsub(/\/([^\/]+)\//, '*\1*')
+      
+      # Underline: _text_ -> ***text*** (bold+italic as markdown doesn't have underline)
+      text = text.gsub(/_([^_]+)_/, '***\1***')
+      
+      # Restore escaped characters
+      text = text.gsub('\u0001', '\\*')
+                 .gsub('\u0002', '\\/')
+                 .gsub('\u0003', '\\_')
+      
+      # Convert checkboxes to markdown format
+      text = text.gsub(/^\[X\]/i, '- [x]')
+                 .gsub(/^\[O\]/, '- [ ] *(in progress)*')
+                 .gsub(/^\[-\]/, '- [ ] *(partial)*')
+                 .gsub(/^\[ \]/, '- [ ]')
+                 .gsub(/^\[_\]/, '- [ ]')
+      
+      # Handle different levels with proper markdown indentation
+      if level == 0 && !text.start_with?('- [')
+        lines << "# #{text}" unless text.empty?
+      elsif level == 1 && !text.start_with?('- [')
+        lines << "## #{text}" unless text.empty?
+      else
+        # Use spaces for indentation in lists
+        indent = '  ' * [level - 2, 0].max
+        if text.start_with?('- [')
+          lines << indent + text
+        else
+          lines << indent + "- #{text}"
+        end
+      end
+    end
+    lines.join("\n")
+  end
+  
+  def export_to_html
+    html = <<~HTML
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <title>#{@filename ? File.basename(@filename, '.*') : 'HyperList'}</title>
+        <style>
+          body { 
+            font-family: 'Courier New', monospace; 
+            margin: 20px; 
+            background-color: white;
+            color: #333;
+            white-space: pre;
+            line-height: 1.3;
+          }
+          /* Based on HyperList LaTeX color definitions */
+          .checked { color: #00cc00; }  /* bright green */
+          .in-progress { color: #00cc00; }  /* bright green */
+          .partial { color: #008800; }  /* medium green */
+          .unchecked { color: #004400; }  /* dark green */
+          .qualifier { color: #008000; }  /* green */
+          .operator { color: #0000cc; font-weight: bold; }  /* blue */
+          .property { color: #cc0000; }  /* red */
+          .reference { color: #800080; }  /* violet */
+          .tag { color: #cc9900; }  /* orange */
+          .timestamp { color: #cc0000; }  /* red - it's a property */
+          .comment { color: #008080; font-style: italic; }  /* turquoise */
+          strong { font-weight: bold; }
+          em { font-style: italic; }
+          u { text-decoration: underline; }
+        </style>
+      </head>
+      <body>
+    HTML
+    
+    @items.each do |item|
+      original_text = item["text"]
+      level = item["level"]
+      indent = "    " * level
+      
+      # Comments (start with semicolon)
+      if original_text.start_with?(';')
+        # Escape HTML for comments
+        text = original_text.gsub('&', '&amp;')
+                           .gsub('<', '&lt;')
+                           .gsub('>', '&gt;')
+                           .gsub('"', '&quot;')
+                           .gsub("'", '&#39;')
+        html += indent + '<span class="comment">' + text + '</span>' + "\n"
+      else
+        # Process non-comment lines
+        # We'll apply formatting BEFORE escaping HTML entities
+        text = original_text
+        
+        # Apply all formatting with placeholder markers
+        # Use unique markers that won't appear in normal text
+        
+        # Markdown formatting MUST come first before other replacements
+        # Bold *text*
+        text = text.gsub(/\*([^*]+)\*/) do
+          "\u0001BOLDSTART\u0002#{$1}\u0001BOLDEND\u0002"
+        end
+        
+        # Italic /text/
+        text = text.gsub(/\/([^\/]+)\//) do
+          "\u0001ITALICSTART\u0002#{$1}\u0001ITALICEND\u0002"
+        end
+        
+        # Underline _text_
+        text = text.gsub(/_([^_]+)_/) do
+          "\u0001UNDERSTART\u0002#{$1}\u0001UNDEREND\u0002"
+        end
+        
+        # Checkboxes at start
+        text = text.sub(/^\[X\]/i, "\u0001CBCHECKED\u0002")
+                   .sub(/^\[O\]/, "\u0001CBPROGRESS\u0002")
+                   .sub(/^\[-\]/, "\u0001CBPARTIAL\u0002")
+                   .sub(/^\[ \]/, "\u0001CBUNCHECKED\u0002")
+                   .sub(/^\[_\]/, "\u0001CBUNCHECKED2\u0002")
+        
+        # Timestamps
+        text = text.gsub(/(\d{4}-\d{2}-\d{2} \d{2}\.\d{2}):/) do
+          "\u0001TSSTART\u0002#{$1}\u0001TSEND\u0002:"
+        end
+        
+        # Qualifiers [text] - but not checkboxes
+        unless text.include?("\u0001CB")
+          text = text.gsub(/\[([^\]]+)\]/) do
+            "\u0001QSTART\u0002[#{$1}]\u0001QEND\u0002"
+          end
+        end
+        
+        # References <text>
+        text = text.gsub(/<([^>]+)>/) do
+          "\u0001REFSTART\u0002<#{$1}>\u0001REFEND\u0002"
+        end
+        
+        # Properties (Word: )
+        text = text.gsub(/\b([A-Z][a-z][a-zA-Z]*): /) do
+          "\u0001PROPSTART\u0002#{$1}: \u0001PROPEND\u0002"
+        end
+        
+        # Operators (CAPS:)
+        text = text.gsub(/\b([A-Z][A-Z]+):/) do
+          "\u0001OPSTART\u0002#{$1}:\u0001OPEND\u0002"
+        end
+        
+        # Hash tags
+        text = text.gsub(/#(\w+)/) do
+          "\u0001TAGSTART\u0002##{$1}\u0001TAGEND\u0002"
+        end
+        
+        # Now escape HTML entities
+        text = text.gsub('&', '&amp;')
+                   .gsub('<', '&lt;')
+                   .gsub('>', '&gt;')
+                   .gsub('"', '&quot;')
+                   .gsub("'", '&#39;')
+        
+        # Replace markers with HTML tags
+        text = text.gsub("\u0001CBCHECKED\u0002", '<span class="checked">[X]</span>')
+                   .gsub("\u0001CBPROGRESS\u0002", '<span class="in-progress">[O]</span>')
+                   .gsub("\u0001CBPARTIAL\u0002", '<span class="partial">[-]</span>')
+                   .gsub("\u0001CBUNCHECKED\u0002", '<span class="unchecked">[ ]</span>')
+                   .gsub("\u0001CBUNCHECKED2\u0002", '<span class="unchecked">[_]</span>')
+                   .gsub("\u0001TSSTART\u0002", '<span class="timestamp">')
+                   .gsub("\u0001TSEND\u0002", '</span>')
+                   .gsub("\u0001QSTART\u0002", '<span class="qualifier">')
+                   .gsub("\u0001QEND\u0002", '</span>')
+                   .gsub("\u0001REFSTART\u0002", '<span class="reference">')
+                   .gsub("\u0001REFEND\u0002", '</span>')
+                   .gsub("\u0001PROPSTART\u0002", '<span class="property">')
+                   .gsub("\u0001PROPEND\u0002", '</span>')
+                   .gsub("\u0001OPSTART\u0002", '<span class="operator">')
+                   .gsub("\u0001OPEND\u0002", '</span>')
+                   .gsub("\u0001TAGSTART\u0002", '<span class="tag">')
+                   .gsub("\u0001TAGEND\u0002", '</span>')
+                   .gsub("\u0001BOLDSTART\u0002", '<strong>')
+                   .gsub("\u0001BOLDEND\u0002", '</strong>')
+                   .gsub("\u0001ITALICSTART\u0002", '<em>')
+                   .gsub("\u0001ITALICEND\u0002", '</em>')
+                   .gsub("\u0001UNDERSTART\u0002", '<u>')
+                   .gsub("\u0001UNDEREND\u0002", '</u>')
+        
+        html += indent + text + "\n"
+      end
+    end
+    
+    html += "</body>\n</html>"
+    html
+  end
+  
+  def export_to_text
+    lines = []
+    @items.each do |item|
+      indent = '    ' * item["level"]  # 4 spaces per level
+      lines << indent + item["text"]
+    end
+    lines.join("\n")
+  end
+  
+  def render
+    render_main
+    render_split_pane if @split_view
+    render_footer
+  end
+  
+  
+  def render_main
+    visible_items = get_visible_items
+    
+    # Calculate window
+    view_height = @main.h
+    if @current < @offset
+      @offset = @current
+    elsif @current >= @offset + view_height
+      @offset = @current - view_height + 1
+    end
+    
+    # Track if we're in a literal block
+    in_literal_block = false
+    literal_start_level = -1
+    
+    # Build display lines only for visible portion
+    lines = []
+    start_idx = @offset
+    end_idx = [@offset + view_height, visible_items.length].min
+    
+    # For very large files, limit cache size and clear old entries
+    if visible_items.length > 5000 && @processed_cache.size > 2000
+      # Keep only recent entries
+      @processed_cache.clear
+    end
+    
+    # Only process visible items
+    (start_idx...end_idx).each do |idx|
+      item = visible_items[idx]
+      next unless item
+      
+      # Create cache key for this item
+      cache_key = "#{item['text']}_#{item['level']}_#{item['fold']}"
+      
+      # Check cache first
+      if @processed_cache[cache_key] && idx != @current
+        lines << @processed_cache[cache_key]
+      else
+        line = "    " * item["level"]  # 4 spaces per level
+        
+        # Add fold indicator
+        real_idx = @items.index(item)  # Get the real index in the full array
+        if real_idx && has_children?(real_idx, @items) && item["fold"]
+          line += "▶".fg("245") + " "  # Gray triangle for collapsed (has hidden children)
+        elsif real_idx && has_children?(real_idx, @items)
+          line += "▷".fg("245") + " "  # Gray triangle for expanded (has visible children)
+        else
+          line += "  "
+        end
+        
+        # Check for literal block markers
+        if item["text"].strip == "\\"
+          if !in_literal_block
+            # Starting a literal block
+            in_literal_block = true
+            literal_start_level = item["level"]
+            # Preserve leading spaces and color the backslash
+            spaces = item["text"].match(/^(\s*)/)[1]
+            line += spaces + "\\".fg("3")  # Yellow for literal marker
+          elsif item["level"] == literal_start_level
+            # Ending a literal block
+            in_literal_block = false
+            literal_start_level = -1
+            # Preserve leading spaces and color the backslash
+            spaces = item["text"].match(/^(\s*)/)[1]
+            line += spaces + "\\".fg("3")  # Yellow for literal marker
+          else
+            # Backslash inside literal block - no highlighting
+            line += item["text"]
+          end
+        elsif in_literal_block
+          # Inside literal block - no syntax highlighting
+          line += item["text"]
+        else
+          # Normal text - apply syntax highlighting with caching
+          # Check if this line has a search match
+          has_match = @search_matches.include?(idx) && @search && !@search.empty?
+          
+          # Check if this is raw text (for help/documentation screens)
+          if item["raw"]
+            line += item["text"]
+          else
+            processed_text_key = has_match ? "search_#{item['text']}_#{@search}" : "text_#{item['text']}"
+            if @processed_cache[processed_text_key] && !has_match
+              line += @processed_cache[processed_text_key]
+            else
+              processed = process_text(item["text"], has_match)
+              @processed_cache[processed_text_key] = processed if @processed_cache.size < 1000 && !has_match
+              line += processed
+            end
+          end
+        end
+        
+        # Cache the line (without highlight)
+        @processed_cache[cache_key] = line if idx != @current
+        
+        # Highlight current line
+        if idx == @current
+          line = line.r  # Always use reverse (white background) for current line
+        end
+        
+        lines << line
+      end
+    end
+    
+    # Only update if content changed
+    new_content = lines.join("\n")
+    if @last_rendered_content != new_content
+      @main.text = new_content
+      @main.refresh
+      @last_rendered_content = new_content
+    end
+  end
+  
+  def process_text(text, highlight_search = false)
+    # Work with a clean copy
+    result = text.dup
+    processed_checkbox = false
+    
+    # If text already contains ANSI codes, return as-is to avoid double-processing
+    if result.include?("\e[")
+      return result
+    end
+    
+    # Check if this is a literal block marker (single backslash)
+    if result.strip == "\\"
+      return result.fg("3")  # Yellow for literal block markers
+    end
+    
+    # Apply search highlighting if we have an active search
+    if highlight_search && @search && !@search.empty?
+      # Find all occurrences of the search term (case insensitive)
+      search_regex = Regexp.new(Regexp.escape(@search), Regexp::IGNORECASE)
+      result.gsub!(search_regex) { |match| match.bg("226").fg("0") }  # Yellow background, black text
+    end
+    
+    # Handle identifiers at the beginning (like "1.1.1.1" or "1A1A")
+    # Based on hyperlist.vim: '^\(\t\|\*\)*[0-9.]* '
+    if result =~ /^([0-9][0-9A-Z.]*\s)/
+      identifier = $1
+      result = result.sub(/^[0-9][0-9A-Z.]*\s/, identifier.fg("5"))  # Magenta for identifiers
+    end
+    
+    # Handle multi-line indicator at the beginning (+ with space)
+    # Based on hyperlist.vim: '^\(\t\|\*\)*+ '
+    if result =~ /^\+\s/
+      result = result.sub(/^(\+\s)/, "+".fg("1") + " ")  # Red for multi-line indicator
+    end
+    
+    # Handle continuation markers (+ at start of indented lines in References section)
+    if result =~ /^\s*\+\s/
+      spaces = $1 || ""
+      marker = $2 || "+ "
+      result = result.sub(/^(\s*)(\+\s)/, spaces + marker.fg("1"))  # Red for continuation marker
+    end
+    
+    # Process checkboxes anywhere in the line (can have leading spaces)
+    if result =~ /^(\s*)(\[X\]|\[x\])/
+      spaces = $1
+      colored = "[X]".fg("10")
+      result = result.sub(/^(\s*)(\[X\]|\[x\])/, "#{spaces}#{colored}")  # Bright green for completed
+      processed_checkbox = true
+    elsif result =~ /^(\s*)(\[O\])/
+      spaces = $1
+      colored = "[O]".fg("10").b
+      result = result.sub(/^(\s*)(\[O\])/, "#{spaces}#{colored}")  # Bold bright green for in-progress
+      processed_checkbox = true
+    elsif result =~ /^(\s*)(\[-\])/
+      spaces = $1
+      colored = "[-]".fg("2")
+      result = result.sub(/^(\s*)(\[-\])/, "#{spaces}#{colored}")  # Green for partial
+      processed_checkbox = true
+    elsif result =~ /^(\s*)(\[ \]|\[_\])/
+      spaces = $1
+      colored = "[ ]".fg("22")
+      result = result.sub(/^(\s*)(\[ \]|\[_\])/, "#{spaces}#{colored}")  # Dark green for unchecked
+      processed_checkbox = true
+    elsif !processed_checkbox
+      # Only handle other qualifiers if we didn't process a checkbox
+      # Based on hyperlist.vim: '\[.\{-}\]'
+      result.gsub!(/\[([^\]]*)\]/) { "[#{$1}]".fg("2") }  # Green for all qualifiers
+    end
+    
+    # We'll handle parentheses AFTER operators/properties to avoid conflicts
+    
+    # Handle date timestamps as properties (for checkbox dates)
+    # Format: YYYY-MM-DD HH.MM:
+    result.gsub!(/(\d{4}-\d{2}-\d{2} \d{2}\.\d{2}):/) do
+      "#{$1}:".fg("1")  # Red for timestamp properties
+    end
+    
+    # Handle operators and properties with colon pattern
+    # Operators: ALL-CAPS followed by colon (with or without space)
+    # Properties: Mixed case followed by colon and space
+    result.gsub!(/(\A|\s+)([a-zA-Z][a-zA-Z0-9_\-() .\/=]*):(\s*)/) do
+      prefix_space = $1
+      text_part = $2
+      space_after = $3 || ""
+      colon_space = ":#{space_after}"
+      
+      # Check if it's an operator (ALL-CAPS with optional _, -, (), /, =, spaces)
+      if text_part =~ /^[A-Z][A-Z_\-() \/=]*$/
+        prefix_space + text_part.fg("4") + colon_space.fg("4")  # Blue for operators
+      elsif text_part.length >= 2 && space_after.include?(" ")
+        # It's a property (mixed case, at least 2 chars, has space after colon)
+        prefix_space + text_part.fg("1") + colon_space.fg("1")  # Red for properties
+      else
+        # Leave as is
+        prefix_space + text_part + colon_space
+      end
+    end
+    
+    # Handle OR: at the beginning of a line (with optional spaces)
+    result.sub!(/^(\s*)(OR):/) { $1 + "OR:".fg("4") }  # Blue for OR: at line start
+    
+    # Handle parentheses content (moved here to avoid conflicts with properties)
+    # Based on hyperlist.vim: '(.\{-})'
+    result.gsub!(/\(([^)]*)\)/) { "(".fg("6") + $1.fg("6") + ")".fg("6") }  # Cyan for parentheses and content
+    
+    # Handle semicolons as separators - but only at the start of the line or after spaces
+    # Don't replace semicolons that might be part of ANSI codes
+    result.gsub!(/^(\s*);/) { $1 + ";".fg("2") }  # Green for comment semicolons
+    
+    # Handle references - color entire reference including brackets
+    # Based on hyperlist.vim: '<\{1,2}[...]\+>\{1,2}'
+    result.gsub!(/<{1,2}([^>]+)>{1,2}/) { |match| match.fg("5") }  # Magenta for references
+    
+    # Handle special keywords SKIP and END
+    result.gsub!(/\b(SKIP|END)\b/) { $1.fg("5") }  # Magenta for special keywords (like references)
+    
+    # Handle quoted strings FIRST, but color ## sequences inside them red
+    # Based on hyperlist.vim: '".\{-}"'
+    result.gsub!(/"([^"]*)"/) do
+      content = $1
+      # Color any ## sequences inside the quotes as red
+      content.gsub!(/(##[<>-]+)/) { $1.fg("1") }
+      '"'.fg("6") + content + '"'.fg("6")  # Cyan for quotes
+    end
+    result.gsub!(/'([^']*)'/) do
+      content = $1
+      # Color any ## sequences inside the quotes as red
+      content.gsub!(/(##[<>-]+)/) { $1.fg("1") }
+      "'".fg("6") + content + "'".fg("6")  # Cyan for single quotes
+    end
+    
+    # Handle change markup - all double-hashes should be red
+    # First handle ##><Reference>##-> style (with reference in the middle)
+    result.gsub!(/(##[<>-]+)(<[^>]+>)(##[<>-]+)/) do
+      $1.fg("1") + $2.fg("5") + $3.fg("1")  # Red markers, magenta reference
+    end
+    
+    # Handle ##Text## change info (text between double hashes)
+    result.gsub!(/(##)([^#]+)(##)/) { $1.fg("1") + $2 + $3.fg("1") }  # Red for change info markers
+    
+    # Then color any remaining ## sequences red
+    result.gsub!(/(##[<>-]*)/) { $1.fg("1") }  # Red for all ## markers
+    
+    # Handle substitutions {variable}
+    result.gsub!(/\{([^}]+)\}/) { "{".fg("3") + $1.fg("3") + "}".fg("3") }  # Yellow for substitutions
+    
+    # Handle hash tags
+    # Based on hyperlist.vim: '#[a-zA-Z0-9.:/_&?%=+\-\*]\+'
+    result.gsub!(/#([a-zA-Z0-9.:_\/&?%=+\-*]+)/) { "##{$1}".fg("184") }  # Yellow/gold for tags
+    
+    # Handle text formatting (bold, italic, underline)
+    # Based on hyperlist.vim patterns with tab/space boundaries
+    # Bold: '\(\t\| \)\@<=\*.\{-}\*\($\| \)\@='
+    result.gsub!(/(?<=\s|\A)\*([^*]+)\*(?=\s|\z)/) { $1.b }
+    
+    # Italic: '\(\t\| \)\@<=/.\{-}/\($\| \)\@='
+    result.gsub!(/(?<=\s|\A)\/([^\/]+)\/(?=\s|\z)/) { $1.i }
+    
+    # Underline: '\(\t\| \)\@<=_.\{-}_\($\| \)\@='
+    result.gsub!(/(?<=\s|\A)_([^_]+)_(?=\s|\z)/) { $1.u }
+    
+    result
+  end
+  
+  def render_footer
+    version_text = "v#{VERSION}"
+    
+    if @mode == :command
+      base_text = ":" + @command
+    elsif @mode == :search
+      base_text = "/" + @search
+    elsif @mode == :insert
+      base_text = "-- INSERT --"
+    elsif !@message.empty?
+      base_text = @message
+      # Set timeout for message if not already set
+      @message_timeout = Time.now + 3.0 if @message_timeout.nil?
+      # Clear message after timeout
+      if @message_timeout && Time.now >= @message_timeout
+        @message = ""
+        @message_timeout = nil
+      end
+    else
+      # Enhanced status with file info
+      filename_display = @filename ? File.basename(@filename) : "New HyperList"
+      modified_indicator = @modified ? "[+]" : ""
+      pos = "#{@current + 1}/#{get_visible_items.length}"
+      
+      # Count words in visible items
+      word_count = count_words_in_items
+      
+      # Auto-save indicator
+      auto_save_indicator = @auto_save_enabled ? "[A]" : ""
+      
+      # Split view indicator  
+      split_indicator = @split_view ? "[#{@active_pane.upcase}]" : ""
+      
+      # Build status line components
+      # Use full path with ~ for home directory
+      full_path = @filename ? @filename.gsub(ENV['HOME'], '~') : "New HyperList"
+      file_part = "#{full_path}#{modified_indicator}"
+      stats_part = "L#{pos} W:#{word_count}"
+      indicators = "#{auto_save_indicator}#{split_indicator}"
+      right_side = "? help  #{version_text}"
+      
+      # Combine left elements
+      left_content = indicators.empty? ? "#{file_part}   #{stats_part}" : "#{file_part}#{indicators}   #{stats_part}"
+      
+      # Calculate spacing between left and right
+      total_length = left_content.length + right_side.length
+      available_space = @cols - total_length
+      
+      if available_space > 0
+        # Add spacing between left and right content
+        base_text = "#{left_content}#{' ' * available_space}#{right_side}"
+      else
+        # Terminal too narrow - truncate the path if needed
+        max_path_length = @cols - stats_part.length - right_side.length - modified_indicator.length - indicators.length - 6
+        if max_path_length > 10
+          truncated_path = full_path.length > max_path_length ? "...#{full_path[-(max_path_length-3)..-1]}" : full_path
+          left_content = "#{truncated_path}#{modified_indicator}#{indicators}   #{stats_part}"
+          base_text = "#{left_content}  #{right_side}"
+        else
+          # Very narrow - show minimal info
+          base_text = "#{stats_part}  #{right_side}"
+        end
+      end
+    end
+    
+    @footer.text = base_text
+    
+    @footer.refresh
+  end
+  
+  def count_words_in_items
+    visible = get_visible_items
+    total_words = 0
+    visible.each do |item|
+      # Count words in plain text (remove markup)
+      text = item["text"].gsub(/\[[^\]]*\]/, '')  # Remove brackets
+      text = text.gsub(/<[^>]*>/, '')  # Remove references
+      text = text.gsub(/[*\/_]/, '')  # Remove formatting
+      words = text.split(/\s+/).reject(&:empty?)
+      total_words += words.length
+    end
+    total_words
+  end
+  
+  def get_visible_items
+    visible = []
+    skip_until = -1
+    
+    @items.each_with_index do |item, idx|
+      if idx <= skip_until
+        next
+      end
+      
+      visible << item
+      
+      if item["fold"] && has_children?(idx, @items)
+        # Skip children if folded
+        level = item["level"]
+        skip_until = idx
+        ((idx + 1)...@items.length).each do |j|
+          if @items[j]["level"] <= level
+            break
+          end
+          skip_until = j
+        end
+      end
+    end
+    
+    visible
+  end
+  
+  def has_children?(idx, items)
+    return false if idx >= items.length - 1
+    return false if idx < 0
+    
+    current_item = items[idx]
+    next_item = items[idx + 1]
+    
+    # For visible items array
+    if current_item.is_a?(Hash) && next_item.is_a?(Hash)
+      return next_item["level"] > current_item["level"]
+    end
+    
+    false
+  end
+  
+  def toggle_fold
+    visible = get_visible_items
+    return if @current >= visible.length
+    
+    item = visible[@current]
+    real_idx = @items.index(item)
+    
+    if real_idx && has_children?(real_idx, @items)
+      @items[real_idx]["fold"] = !@items[real_idx]["fold"]
+      record_last_action(:toggle_fold, nil)
+    end
+  end
+  
+  def move_up
+    @current = [@current - 1, 0].max
+  end
+  
+  def move_down
+    max = get_visible_items.length - 1
+    @current = [@current + 1, max].min
+  end
+  
+  def page_up
+    @current = [@current - (@main.h - 1), 0].max
+    @offset = [@offset - (@main.h - 1), 0].max
+  end
+  
+  def page_down
+    max = get_visible_items.length - 1
+    @current = [@current + (@main.h - 1), max].min
+  end
+  
+  def go_to_parent
+    visible = get_visible_items
+    return if @current >= visible.length
+    
+    current_level = visible[@current]["level"]
+    return if current_level == 0
+    
+    # Search upward for parent
+    (@current - 1).downto(0) do |i|
+      if visible[i]["level"] < current_level
+        @current = i
+        break
+      end
+    end
+  end
+  
+  def go_to_first_child
+    visible = get_visible_items
+    return if @current >= visible.length - 1
+    
+    current_level = visible[@current]["level"]
+    if visible[@current + 1]["level"] > current_level
+      @current += 1
+    end
+  end
+  
+  def expand_to_level(level)
+    @items.each do |item|
+      item["fold"] = item["level"] >= level
+    end
+  end
+  
+  def jump_to_next_template_marker
+    visible_items = get_visible_items
+    return if visible_items.empty?
+    
+    start_idx = @current
+    
+    # Search forward from current position
+    ((start_idx + 1)...visible_items.length).each do |idx|
+      if visible_items[idx]["text"].include?("=")
+        @current = idx
+        render  # Show the highlighted item first
+        edit_line  # Then edit it
+        return
+      end
+    end
+    
+    # Wrap around to beginning
+    (0..start_idx).each do |idx|
+      if visible_items[idx]["text"].include?("=")
+        @current = idx
+        render  # Show the highlighted item first
+        edit_line  # Then edit it
+        return
+      end
+    end
+    
+    @message = "No template markers found"
+  end
+  
+  def toggle_presentation_mode
+    if @presentation_mode
+      # Exit presentation mode - restore all items
+      @presentation_mode = false
+      @items.each { |item| item["fold"] = false }
+      @message = "Presentation mode disabled"
+    else
+      # Enter presentation mode - show only current item and ancestors
+      @presentation_mode = true
+      show_only_current_and_ancestors
+      @message = "Presentation mode enabled"
+    end
+  end
+  
+  def show_only_current_and_ancestors
+    visible_items = get_visible_items
+    return if visible_items.empty? || @current >= visible_items.length
+    
+    current_item = visible_items[@current]
+    current_level = current_item["level"]
+    current_real_idx = @items.index(current_item)
+    
+    # First, fold everything
+    @items.each { |item| item["fold"] = true }
+    
+    # Unfold current item
+    current_item["fold"] = false
+    
+    # Unfold all ancestors
+    ancestor_level = current_level - 1
+    idx = current_real_idx - 1
+    
+    while idx >= 0 && ancestor_level >= 0
+      if @items[idx]["level"] == ancestor_level
+        @items[idx]["fold"] = false
+        ancestor_level -= 1
+      end
+      idx -= 1
+    end
+    
+    # Unfold immediate children of current item
+    idx = current_real_idx + 1
+    while idx < @items.length && @items[idx]["level"] > current_level
+      if @items[idx]["level"] == current_level + 1
+        @items[idx]["fold"] = false
+      end
+      idx += 1
+    end
+  end
+  
+  def save_undo_state
+    # Deep copy the CURRENT items array before modification
+    state_copy = @items.map { |item| item.dup }
+    
+    # Add to undo stack
+    @undo_stack << state_copy
+    @undo_position << @current
+    
+    # Clear redo stack when new action is performed
+    @redo_stack.clear
+    @redo_position.clear
+    
+    # Limit undo stack to 100 levels to prevent memory issues
+    if @undo_stack.length > 100
+      @undo_stack.shift
+      @undo_position.shift
+    end
+    
+    # Debug output
+    # @message = "Saved undo state (stack size: #{@undo_stack.length})"
+  end
+  
+  def states_equal?(state1, state2)
+    return false if state1.length != state2.length
+    state1.each_with_index do |item, idx|
+      return false if item["text"] != state2[idx]["text"] || 
+                     item["level"] != state2[idx]["level"]
+    end
+    true
+  end
+  
+  def clear_cache
+    @processed_cache = {}
+    @last_rendered_content = nil
+  end
+  
+  def undo
+    # Need at least one state to undo to
+    if @undo_stack.empty?
+      @message = "Nothing to undo"
+      return
+    end
+    
+    # Save current state to redo stack before changing
+    current_state = @items.map { |item| item.dup }
+    @redo_stack << current_state
+    @redo_position << @current
+    
+    # Restore the previous state from undo stack
+    previous_state = @undo_stack.pop
+    previous_position = @undo_position.pop
+    
+    @items = previous_state.map { |item| item.dup }
+    
+    # Restore cursor position, but ensure it's valid
+    visible = get_visible_items
+    if previous_position && visible.length > 0
+      @current = [previous_position, visible.length - 1].min
+      @current = 0 if @current < 0
+    else
+      @current = 0
+    end
+    
+    # Clear cache since items changed
+    clear_cache
+    
+    @modified = true
+    @message = "Undone (#{@undo_stack.length} undo levels, #{@redo_stack.length} redo available)"
+  end
+  
+  def record_last_action(type, data = nil)
+    @last_action_type = type
+    @last_action = data
+  end
+  
+  def repeat_last_action
+    return unless @last_action_type
+    
+    case @last_action_type
+    when :insert_line
+      insert_line_with_text(@last_action)
+    when :insert_child
+      insert_child_with_text(@last_action)
+    when :delete_line
+      delete_line
+    when :edit_line
+      if @last_action && @last_action[:new_text]
+        edit_current_line(@last_action[:new_text])
+      end
+    when :toggle_checkbox
+      toggle_checkbox
+    when :toggle_checkbox_with_date
+      toggle_checkbox_with_date
+    when :toggle_fold
+      toggle_fold
+    when :indent_right
+      indent_right(@last_action || true)
+    when :indent_left
+      indent_left(@last_action || true)
+    when :paste
+      paste_line
+    when :yank_line
+      yank_line(@last_action || false)
+    else
+      @message = "No repeatable action"
+    end
+  end
+  
+  def redo_change  # Renamed to avoid conflict with Ruby's redo keyword
+    # Need at least one state to redo
+    if @redo_stack.empty?
+      @message = "Nothing to redo"
+      return
+    end
+    
+    # Save current state back to undo stack
+    current_state = @items.map { |item| item.dup }
+    @undo_stack << current_state
+    @undo_position << @current
+    
+    # Restore the state from redo stack
+    redo_state = @redo_stack.pop
+    redo_position = @redo_position.pop
+    
+    @items = redo_state.map { |item| item.dup }
+    
+    # Restore cursor position, but ensure it's valid
+    visible = get_visible_items
+    if redo_position && visible.length > 0
+      @current = [redo_position, visible.length - 1].min
+      @current = 0 if @current < 0
+    else
+      @current = 0
+    end
+    
+    # Clear cache since items changed
+    clear_cache
+    
+    @modified = true
+    @message = "Redone (#{@undo_stack.length} undo levels, #{@redo_stack.length} redo available)"
+  end
+  
+  def insert_line
+    @mode = :insert
+    
+    input = @footer.ask("New item: ", "")
+    
+    if input && !input.strip.empty?
+      insert_line_with_text(input)
+      record_last_action(:insert_line, input)
+    end
+    
+    @mode = :normal
+    @footer.clear  # Clear footer immediately
+    @footer.refresh
+  end
+  
+  def insert_line_with_text(text)
+    return unless text && !text.strip.empty?
+    
+    save_undo_state  # Save state before modification
+    visible = get_visible_items
+    if @current < visible.length
+      level = visible[@current]["level"]
+      real_idx = @items.index(visible[@current])
+      @items.insert(real_idx + 1, {"text" => text, "level" => level, "fold" => false})
+    else
+      @items << {"text" => text, "level" => 0, "fold" => false}
+    end
+    @modified = true
+    @current += 1
+  end
+  
+  def insert_child
+    @mode = :insert
+    
+    input = @footer.ask("New child item: ", "")
+    
+    if input && !input.strip.empty?
+      insert_child_with_text(input)
+      record_last_action(:insert_child, input)
+    end
+    
+    @mode = :normal
+    @footer.clear  # Clear footer immediately
+    @footer.refresh
+  end
+  
+  def insert_child_with_text(text)
+    return unless text && !text.strip.empty?
+    
+    save_undo_state  # Save state before modification
+    visible = get_visible_items
+    if @current < visible.length
+      level = visible[@current]["level"] + 1
+      real_idx = @items.index(visible[@current])
+      
+      # Unfold parent if needed
+      @items[real_idx]["fold"] = false
+      
+      @items.insert(real_idx + 1, {"text" => text, "level" => level, "fold" => false})
+    else
+      @items << {"text" => text, "level" => 1, "fold" => false}
+    end
+    @modified = true
+    @current += 1
+  end
+  
+  def edit_line
+    visible = get_visible_items
+    return if @current >= visible.length
+    
+    item = visible[@current]
+    real_idx = @items.index(item)
+    
+    @mode = :insert
+    
+    input = @footer.ask("Edit: ", item["text"])
+    
+    if input && input != item["text"]
+      edit_current_line(input)
+      record_last_action(:edit_line, {old_text: item["text"], new_text: input})
+    end
+    
+    @mode = :normal
+    @footer.clear  # Clear footer immediately
+    @footer.refresh
+  end
+  
+  def edit_current_line(text)
+    visible = get_visible_items
+    return if @current >= visible.length
+    
+    item = visible[@current]
+    real_idx = @items.index(item)
+    
+    save_undo_state  # Save state before modification
+    @items[real_idx]["text"] = text
+    @modified = true
+    clear_cache  # Clear cache when content changes
+  end
+  
+  def delete_line(with_children = false)
+    visible = get_visible_items
+    return if visible.empty?
+    return if @current >= visible.length
+    
+    save_undo_state  # Save state before modification
+    
+    item = visible[@current]
+    real_idx = @items.index(item)
+    
+    # First, yank the item(s) to clipboard
+    @clipboard = []
+    @clipboard << item.dup
+    
+    # Determine what to delete
+    level = item["level"]
+    delete_count = 1
+    
+    if with_children
+      # Delete item and its children (C-D was used)
+      @clipboard_is_tree = true  # Mark as tree for paste behavior
+      ((real_idx + 1)...@items.length).each do |i|
+        if @items[i]["level"] > level
+          @clipboard << @items[i].dup  # Also add children to clipboard
+          delete_count += 1
+        else
+          break
+        end
+      end
+    else
+      # For single line delete, check if it has children (D always deletes with children)
+      @clipboard_is_tree = false  # Mark as single/adaptive for paste behavior
+      ((real_idx + 1)...@items.length).each do |i|
+        if @items[i]["level"] > level
+          @clipboard << @items[i].dup
+          delete_count += 1
+        else
+          break
+        end
+      end
+    end
+    
+    # Delete the items
+    delete_count.times { @items.delete_at(real_idx) }
+    
+    @items = [{"text" => "Empty", "level" => 0, "fold" => false}] if @items.empty?
+    
+    @current = [@current, get_visible_items.length - 1].min
+    @current = 0 if @current < 0
+    @modified = true
+    
+    # Show message
+    @message = "Deleted and yanked #{@clipboard.length} item(s)"
+    
+    record_last_action(:delete_line, with_children)
+  end
+  
+  def yank_line(with_children = false)
+    visible = get_visible_items
+    return if @current >= visible.length
+    
+    item = visible[@current]
+    real_idx = @items.index(item)
+    
+    @clipboard = []
+    @clipboard << item.dup
+    @clipboard_is_tree = with_children  # Remember if this is a tree copy (Y) or single (y)
+    
+    # Copy children if requested
+    if with_children
+      level = item["level"]
+      ((real_idx + 1)...@items.length).each do |i|
+        if @items[i]["level"] > level
+          @clipboard << @items[i].dup
+        else
+          break
+        end
+      end
+    end
+    
+    @message = "Yanked #{@clipboard.length} item(s)"
+    record_last_action(:yank_line, with_children)
+  end
+  
+  def paste_line
+    return unless @clipboard && !@clipboard.empty?
+    
+    save_undo_state  # Save state before modification
+    
+    visible = get_visible_items
+    if @current < visible.length
+      real_idx = @items.index(visible[@current])
+      
+      if @clipboard_is_tree
+        # For tree paste (C-D or Y), maintain original indentation structure
+        # Just insert after current position without adjusting levels
+        @clipboard.reverse.each do |item|
+          new_item = item.dup
+          @items.insert(real_idx + 1, new_item)
+        end
+      else
+        # For single/adaptive paste (D or y), adjust to match context
+        base_level = visible[@current]["level"]
+        level_diff = base_level - @clipboard[0]["level"]
+        
+        @clipboard.reverse.each do |item|
+          new_item = item.dup
+          new_item["level"] = item["level"] + level_diff
+          @items.insert(real_idx + 1, new_item)
+        end
+      end
+    else
+      # Pasting at end of list - maintain original levels
+      @clipboard.each do |item|
+        @items << item.dup
+      end
+    end
+    
+    @modified = true
+    @message = "Pasted #{@clipboard.length} item(s)"
+    record_last_action(:paste, nil)
+  end
+  
+  def move_item_up(with_children = false)
+    visible = get_visible_items
+    return if @current >= visible.length || @current == 0
+    
+    save_undo_state  # Save state before modification
+    
+    item = visible[@current]
+    real_idx = @items.index(item)
+    
+    # Can't move if already at the beginning
+    return if real_idx == 0
+    
+    # Collect item(s) to move
+    items_to_move = [item]
+    
+    if with_children
+      # Collect all children
+      level = item["level"]
+      ((real_idx + 1)...@items.length).each do |i|
+        if @items[i]["level"] > level
+          items_to_move << @items[i]
+        else
+          break
+        end
+      end
+    end
+    
+    # Remove items from their current position
+    items_to_move.length.times { @items.delete_at(real_idx) }
+    
+    # Insert one position up (before the item that was above us)
+    target_idx = real_idx - 1
+    items_to_move.reverse.each do |item_to_move|
+      @items.insert(target_idx, item_to_move)
+    end
+    
+    @current -= 1
+    @modified = true
+    @message = "Moved #{items_to_move.length} item(s) up one line"
+    record_last_action(:move_item_up, with_children)
+  end
+  
+  def move_item_down(with_children = false)
+    visible = get_visible_items
+    return if @current >= visible.length - 1
+    
+    save_undo_state  # Save state before modification
+    
+    item = visible[@current]
+    real_idx = @items.index(item)
+    
+    # Collect item(s) to move
+    items_to_move = [item]
+    last_idx = real_idx
+    
+    if with_children
+      # Collect all children
+      level = item["level"]
+      ((real_idx + 1)...@items.length).each do |i|
+        if @items[i]["level"] > level
+          items_to_move << @items[i]
+          last_idx = i
+        else
+          break
+        end
+      end
+    end
+    
+    # Can't move if we're already at the end
+    return if last_idx >= @items.length - 1
+    
+    # Remove items from their current position
+    items_to_move.length.times { @items.delete_at(real_idx) }
+    
+    # Insert one position down (after the item that was below us)
+    # Since we removed items, the target position is now at real_idx + 1
+    target_idx = real_idx + 1
+    
+    items_to_move.each_with_index do |item_to_move, idx|
+      @items.insert(target_idx + idx, item_to_move)
+    end
+    
+    @current += 1
+    @modified = true
+    @message = "Moved #{items_to_move.length} item(s) down one line"
+    record_last_action(:move_item_down, with_children)
+  end
+  
+  def indent_right(with_children = true)
+    visible = get_visible_items
+    return if @current >= visible.length
+    
+    item = visible[@current]
+    real_idx = @items.index(item)
+    
+    # Can only indent if there's a previous item at same or higher level
+    if real_idx > 0
+      save_undo_state  # Save state before modification
+      original_level = @items[real_idx]["level"]
+      @items[real_idx]["level"] += 1
+      
+      # Also indent children if requested
+      if with_children
+        ((real_idx + 1)...@items.length).each do |i|
+          if @items[i]["level"] > original_level
+            @items[i]["level"] += 1
+          else
+            break
+          end
+        end
+      end
+      
+      @modified = true
+      record_last_action(:indent_right, with_children)
+    end
+  end
+  
+  def indent_left(with_children = true)
+    visible = get_visible_items
+    return if @current >= visible.length
+    
+    item = visible[@current]
+    real_idx = @items.index(item)
+    
+    if @items[real_idx]["level"] > 0
+      save_undo_state  # Save state before modification
+      original_level = @items[real_idx]["level"]
+      @items[real_idx]["level"] -= 1
+      
+      # Also unindent children if requested
+      if with_children
+        ((real_idx + 1)...@items.length).each do |i|
+          if @items[i]["level"] > original_level
+            @items[i]["level"] -= 1
+          else
+            break
+          end
+        end
+      end
+      
+      @modified = true
+      record_last_action(:indent_left, with_children)
+    end
+  end
+  
+  def toggle_checkbox
+    visible = get_visible_items
+    return if @current >= visible.length
+    
+    save_undo_state  # Save state before modification
+    
+    item = visible[@current]
+    real_idx = @items.index(item)
+    text = @items[real_idx]["text"]
+    
+    if text =~ /^\[.\]/
+      # Cycle through states: [ ]/[_] -> [X] -> [O] -> [-] -> [ ]
+      text = case text[1]
+      when ' ', '_' then text.sub(/^\[[ _]\]/, '[X]')
+      when 'X', 'x' then text.sub(/^\[[Xx]\]/, '[O]')
+      when 'O' then text.sub(/^\[O\]/, '[-]')
+      when '-' then text.sub(/^\[-\]/, '[ ]')
+      else text
+      end
+    else
+      # Add checkbox
+      text = "[ ] #{text}"
+    end
+    
+    @items[real_idx]["text"] = text
+    @modified = true
+    record_last_action(:toggle_checkbox, nil)
+  end
+  
+  def toggle_checkbox_with_date
+    visible = get_visible_items
+    return if @current >= visible.length
+    
+    save_undo_state  # Save state before modification
+    
+    item = visible[@current]
+    real_idx = @items.index(item)
+    text = @items[real_idx]["text"]
+    
+    # First, handle existing timestamp in the hyperlist.vim format
+    # Format is: [x] YYYY-MM-DD HH.MM: rest of text
+    text = text.sub(/ \d{4}-\d{2}-\d{2} \d{2}\.\d{2}:/, '')
+    
+    if text =~ /^\[.\]/
+      # Toggle checkbox states with date stamping
+      text = case text[1]
+      when ' '
+        # Unchecked -> mark as in progress
+        text.sub(/^\[ \]/, '[_]')
+      when '_'
+        # In progress -> mark as completed with timestamp
+        time = Time.now.strftime("%Y-%m-%d %H.%M")
+        text.sub(/^\[_\]/, "[x] #{time}:")
+      when 'x', 'X'
+        # Completed -> back to unchecked
+        text.sub(/^\[[xX]\]/, '[_]')
+      when 'O'
+        # In progress (capital O) -> completed with timestamp
+        time = Time.now.strftime("%Y-%m-%d %H.%M")
+        text.sub(/^\[O\]/, "[x] #{time}:")
+      else text
+      end
+    else
+      # Add checkbox in unchecked state
+      text = "[_] #{text}"
+    end
+    
+    @items[real_idx]["text"] = text
+    @modified = true
+    record_last_action(:toggle_checkbox_with_date, nil)
+  end
+  
+  def search_forward
+    @mode = :search
+    @search = @footer.ask("Search: ", @search || "")
+    @mode = :normal
+    @footer.clear  # Clear footer immediately
+    @footer.refresh
+    
+    return if !@search || @search.empty?
+    
+    # Find all matches for highlighting
+    find_all_matches
+    
+    visible = get_visible_items
+    start = (@current + 1) % visible.length
+    
+    visible.length.times do |i|
+      idx = (start + i) % visible.length
+      if visible[idx]["text"].downcase.include?(@search.downcase)
+        @current = idx
+        @message = "Found: #{@search} (#{@search_matches.length} total matches)"
+        clear_cache  # Clear cache to show highlighting
+        return
+      end
+    end
+    
+    @message = "Not found: #{@search}"
+    @search_matches = []
+  end
+  
+  def find_all_matches
+    @search_matches = []
+    return if !@search || @search.empty?
+    
+    get_visible_items.each_with_index do |item, idx|
+      if item["text"].downcase.include?(@search.downcase)
+        @search_matches << idx
+      end
+    end
+  end
+  
+  def search_next
+    return if !@search || @search.empty?
+    
+    visible = get_visible_items
+    start = (@current + 1) % visible.length
+    
+    visible.length.times do |i|
+      idx = (start + i) % visible.length
+      if visible[idx]["text"].downcase.include?(@search.downcase)
+        @current = idx
+        return
+      end
+    end
+    
+    @message = "No more matches"
+  end
+  
+  def help_line(cmd1, desc1, cmd2 = nil, desc2 = nil)
+    # Format help lines with consistent column spacing
+    # Start with no leading space
+    line = ""
+    
+    # First command and description
+    line += cmd1
+    # Calculate real length without ANSI codes
+    cmd1_real_length = cmd1.gsub(/\e\[[0-9;]*m/, '').length
+    # Longest commands are like ":recent :r" (10 chars), "C-DOWN" (6 chars)
+    max_cmd_length = 11
+    spaces_needed = max_cmd_length - cmd1_real_length
+    line += " " * [spaces_needed, 1].max  # At least 1 space after command
+    
+    # Add first description - don't truncate
+    line += desc1
+    
+    # Second command and description (if provided)
+    if cmd2 && desc2
+      # Calculate position for second column
+      # Need to account for ANSI codes in desc1
+      desc1_real_length = desc1.gsub(/\e\[[0-9;]*m/, '').length
+      current_pos = cmd1_real_length + spaces_needed + desc1_real_length
+      
+      # Start second column at position 40
+      target_pos = 40
+      padding_needed = target_pos - current_pos
+      line += " " * [padding_needed, 3].max  # At least 3 spaces between columns
+      
+      line += cmd2
+      cmd2_real_length = cmd2.gsub(/\e\[[0-9;]*m/, '').length
+      # Align second column descriptions (longest is ":export :ex" = 11 chars, ":vsplit :vs" = 11 chars)
+      max_cmd2_length = 13  # 11 chars max + 2 spaces minimum padding
+      spaces_needed2 = max_cmd2_length - cmd2_real_length
+      line += " " * spaces_needed2
+      line += desc2
+    end
+    
+    line
+  end
+  
+  def show_help
+    # Build help text using consistent formatting
+    help_lines = []
+    help_lines << " Press #{"?".fg("10")} for full documentation, #{"UP/DOWN".fg("10")} to scroll, or any other key to return"
+    help_lines << ""
+    help_lines << "#{"HYPERLIST KEY BINDINGS".b}"
+    help_lines << ""
+    help_lines << "#{"NAVIGATION".fg("14")}"
+    help_lines << help_line("#{"j/↓".fg("10")}", "Move down", "#{"k/↑".fg("10")}", "Move up")
+    help_lines << help_line("#{"h".fg("10")}", "Go to parent", "#{"l".fg("10")}", "Go to first child")
+    help_lines << help_line("#{"PgUp".fg("10")}", "Page up", "#{"PgDn".fg("10")}", "Page down")
+    help_lines << help_line("#{"g/Home".fg("10")}", "Go to top", "#{"G/End".fg("10")}", "Go to bottom")
+    help_lines << help_line("#{"/".fg("10")}", "Search", "#{"n".fg("10")}", "Next match")
+    help_lines << help_line("#{"?".fg("10")}", "This help", "#{"??".fg("10")}", "Full documentation")
+    help_lines << help_line("#{"ma".fg("10")}", "Set mark 'a'", "#{"'a".fg("10")}", "Jump to mark 'a'")
+    help_lines << help_line("#{"''".fg("10")}", "Jump to prev position", "#{"N".fg("10")}", "Next = template marker")
+    help_lines << ""
+    help_lines << "#{"FOLDING".fg("14")}"
+    help_lines << help_line("#{"Space".fg("10")}", "Toggle fold", "#{"za".fg("10")}", "Toggle all folds")
+    help_lines << help_line("#{"zo".fg("10")}", "Open fold", "#{"zc".fg("10")}", "Close fold")
+    help_lines << help_line("#{"zR".fg("10")}", "Open all", "#{"zM".fg("10")}", "Close all")
+    help_lines << help_line("#{"1-9".fg("10")}", "Expand to level", "#{"0".fg("10")}", "Multi-digit fold level")
+    help_lines << help_line("#{"▶".fg("245")}", "Collapsed (hidden)")
+    help_lines << help_line("#{"▷".fg("245")}", "Expanded (visible)")
+    help_lines << ""
+    help_lines << "#{"EDITING".fg("14")}"
+    help_lines << help_line("#{"i/Enter".fg("10")}", "Edit line", "#{"o".fg("10")}", "Insert line below")
+    help_lines << help_line("#{"O".fg("10")}", "Insert line above", "#{"a".fg("10")}", "Insert child")
+    help_lines << help_line("#{"D".fg("10")}", "Delete+yank line", "#{"C-D".fg("10")}", "Delete+yank item&descendants")
+    help_lines << help_line("#{"y".fg("10")}/#{"Y".fg("10")}", "Copy line/tree", "#{"p".fg("10")}", "Paste")
+    help_lines << help_line("#{"u".fg("10")}", "Undo", "#{".".fg("10")}", "Repeat last action")
+    help_lines << help_line("#{"r".fg("10")}, #{"C-R".fg("10")}", "Redo")
+    help_lines << help_line("#{"S-UP".fg("10")}", "Move item up", "#{"S-DOWN".fg("10")}", "Move item down")
+    help_lines << help_line("#{"C-UP".fg("10")}", "Move item&descendants up", "#{"C-DOWN".fg("10")}", "Move item&descendants down")
+    help_lines << help_line("#{"Tab".fg("10")}", "Indent item+kids", "#{"S-Tab".fg("10")}", "Unindent item+kids")
+    help_lines << help_line("#{"→".fg("10")}", "Indent item only", "#{"←".fg("10")}", "Unindent item only")
+    help_lines << ""
+    help_lines << "#{"FEATURES".fg("14")}"
+    help_lines << help_line("#{"v".fg("10")}", "Toggle checkbox", "#{"V".fg("10")}", "Checkbox with date")
+    help_lines << help_line("#{"R".fg("10")}", "Go to reference", "#{"F".fg("10")}", "Open file")
+    help_lines << help_line("#{"N".fg("10")}", "Next = marker", "#{"P".fg("10")}", "Presentation mode")
+    help_lines << help_line("#{"t".fg("10")}", "Insert template", "#{":template".fg("10")}", "Show templates")
+    help_lines << help_line("#{"Ma".fg("10")}", "Record macro 'a'", "#{"@a".fg("10")}", "Play macro 'a'")
+    help_lines << help_line("#{":vsplit".fg("10")}", "Split view vertically", "#{"ww".fg("10")}", "Switch panes")
+    help_lines << help_line("#{"\\u".fg("10")}", "Toggle underline")
+    help_lines << ""
+    help_lines << "#{"FILE OPERATIONS".fg("14")}"
+    help_lines << help_line("#{":w".fg("10")}", "Save", "#{":q".fg("10")}", "Quit")
+    help_lines << help_line("#{":wq".fg("10")}", "Save and quit", "#{":e file".fg("10")}", "Open file")
+    help_lines << help_line("#{":recent".fg("10")}", "Recent files", "#{":export :ex".fg("10")}", "Export md|html|txt")
+    help_lines << help_line("#{":graph :g".fg("10")}", "Export to PNG graph", "#{":vsplit :vs".fg("10")}", "Split view")
+    help_lines << help_line("#{":as on".fg("10")}", "Enable autosave", "#{":as off".fg("10")}", "Disable autosave")
+    help_lines << help_line("#{":as N".fg("10")}", "Set interval (secs)", "#{":as".fg("10")}", "Show autosave status")
+    help_lines << help_line("#{"q".fg("10")}", "Quit (asks to save)", "#{"Q".fg("10")}", "Force quit")
+    help_lines << ""
+    help_lines << "#{"COLOR SCHEME".fg("14")}"
+    help_lines << help_line("#{"[X]".fg("10")}", "Completed", "#{"[O]".fg("10").b}", "In progress")
+    help_lines << help_line("#{"[ ]".fg("22")}", "Unchecked", "#{"[-]".fg("2")}", "Partial")
+    help_lines << help_line("#{"[?]".fg("2")}", "Conditionals", "#{"AND:".fg("4")}", "Operators")
+    help_lines << help_line("#{"Date:".fg("1")}", "Properties", "#{"<ref>".fg("5")}", "References")
+    help_lines << help_line("#{"(info)".fg("6")}", "Parentheses", "#{'"text"'.fg("14")}", "Quoted strings")
+    help_lines << help_line("#{"; comment".fg("6")}", "Comments", "#{"#tag".fg("184")}", "Hash tags")
+    
+    help = help_lines.join("\n")
+    
+    # Store current state
+    saved_items = @items.dup
+    saved_current = @current
+    saved_offset = @offset
+    saved_modified = @modified
+    
+    # Create temporary help items for scrolling
+    @items = help.split("\n").map { |line| {"text" => line, "level" => 0, "fold" => false, "raw" => true} }
+    @current = 0
+    @offset = 0
+    @modified = false
+    
+    # Help viewer loop
+    loop do
+      render_main
+      @footer.text = "Help | UP/DOWN: scroll | ?: documentation | any other key: return"
+      @footer.refresh
+      
+      c = getchr
+      case c
+      when "?"
+        # Restore state before showing documentation
+        @items = saved_items
+        @current = saved_current
+        @offset = saved_offset
+        @modified = saved_modified
+        show_documentation
+        return
+      when "j", "DOWN"
+        move_down
+      when "k", "UP"
+        move_up
+      when "PgUP"
+        page_up
+      when "PgDOWN"
+        page_down
+      when "HOME"
+        @current = 0
+        @offset = 0
+      when "END"
+        @current = @items.length - 1
+      else
+        # Any other key returns to main view
+        break
+      end
+    end
+    
+    # Restore original state
+    @items = saved_items
+    @current = saved_current
+    @offset = saved_offset
+    @modified = saved_modified
+  end
+  
+  def show_documentation
+    doc = <<~DOC
+    
+    #{"HYPERLIST DOCUMENTATION".b}
+    #{"Version 2.6 - Complete Specification".fg("245")}
+    
+    #{"Official HyperList Page:".fg("14")} #{"https://isene.org/hyperlist/".fg("5")}
+    #{"By Geir Isene".fg("245")}
+    
+    #{"═" * 60}
+    
+    #{"OVERVIEW".b}
+    
+    HyperList represents a way to describe anything - any state or any
+    transition. It represents data in tree-structure lists with a very
+    rich set of features. It can be used for any structuring of data:
+    
+    • Todo lists and project plans
+    • Data structures and business processes  
+    • Logic breakdowns and outlines of ideas
+    • Food recipes, instructions, and much more
+    
+    Everything. Concise and precise.
+    
+    #{"═" * 60}
+    
+    #{"HYPERLIST ITEM STRUCTURE".b}
+    
+    A HyperList Item consists of these parts in sequence:
+    
+    1. #{"Starter".fg("5")} (optional)
+       • Identifier: Numbers (1.1.1) or mixed (1A1A)
+       • Multi-line indicator: + (plus sign)
+    
+    2. #{"Type".fg("5")} (optional)
+       • State: S: or |
+       • Transition: T: or /
+    
+    3. #{"Content".fg("5")} (required)
+       • Element: Operator, Qualifier, Property, or Description
+       • Additive: Reference, Tag, Comment, Quote, Change Markup
+    
+    4. #{"Separator".fg("5")}
+       • Newline (for new items)
+       • Semicolon (for same-line items)
+    
+    #{"═" * 60}
+    
+    #{"BASIC STRUCTURE".b}
+    
+    • Items are organized hierarchically using TAB indentation
+    • Each level of indentation represents a deeper level
+    • Children add information to their parents
+    • A separator between items reads as "then" or "and"
+    
+    #{"CHECKBOXES".b}
+    
+    [_]  Unchecked item (underscore placeholder)
+    [ ]  Unchecked item (space placeholder)
+    [X]  Completed item  
+    [x]  Completed item (lowercase)
+    [O]  Item in progress
+    [-]  Partially completed item
+    
+    Use 'v' to toggle checkboxes through states.
+    Use 'V' to toggle with automatic timestamp on completion.
+    Format: [x] YYYY-MM-DD HH.MM: (timestamp after checkbox)
+    
+    #{"QUALIFIERS".b}
+    
+    Qualifiers in square brackets tell how many times, when, or under
+    what conditions an item exists or is executed:
+    
+    [?]              Optional item
+    [3]              Do item 3 times
+    [1+]             Do item 1 or more times  
+    [2..5]           Do item 2 to 5 times
+    [<4]             Do item less than 4 times
+    [>2]             Do item more than 2 times
+    [Condition]      Do item if condition is true
+    [?Condition]     Same as above, with explicit "if"
+    [3, foo=true]    Do item 3 times while foo=true
+    [A. B. C]        Do item in context A, then B, then C
+    
+    Complex example:
+    [2..7, Raining, Temp<5°C] Do item 2-7 times while raining and cold
+    
+    #{"TIMESTAMPS".b}
+    
+    ISO-8601 format: YYYY-MM-DD HH.MM.SS (can be shortened)
+    
+    Absolute timestamps:
+    [2025-08-11]           On this date
+    [2025-08-11 14.30]     At this date and time
+    
+    Relative timestamps:
+    [+YYYY-MM-DD]          Wait this long before doing item
+    [-YYYY-MM-DD]          Wait this long before next item
+    [+1 week]              Wait one week
+    [<+4 days]             Less than 4 days after previous
+    
+    Recurring items:
+    [2025-05-01+7]         Every 7 days starting from date
+    [YYYY-MM-03]           Every 3rd of every month
+    [Tue,Fri 12.00]        Noon every Tuesday and Friday
+    
+    #{"PROPERTIES".b}
+    
+    Any text followed by colon is a property (displayed in red):
+    
+    Location: Conference room
+    Priority: High
+    2025-08-11 14.30: Meeting starts
+    State: Active
+    
+    #{"OPERATORS".b}
+    
+    ALL CAPS followed by colon (displayed in blue):
+    
+    AND:        All children must be true/done
+    OR:         One of the children must be true/done  
+    AND/OR:     One or more children
+    NOT:        Negation - don't do the following
+    THEN:       Sequence indicator
+    IF:         Conditional execution
+    WHEN:       Time-based condition
+    WHILE:      Duration condition
+    UNLESS:     Negative condition
+    UNTIL:      End condition
+    CONTINUOUS: Items run continuously
+    ENCRYPTION: Following items are encrypted
+    EXAMPLES:   List of examples follows
+    CHOOSE:     Select from options
+    
+    #{"REFERENCES".b}
+    
+    Enclosed in angle brackets < > (displayed in magenta):
+    
+    Hard reference (redirect):
+    <Item name>            Jump to referenced item
+    <<Item name>>          Jump to item and return after
+    
+    Soft reference (information):
+    See <Other item>       Look for more info at reference
+    (<Related>)            Apropos reference in parentheses
+    
+    Special references:
+    <+3>                   3 items down
+    <-5>                   5 items up
+    SKIP                   End current list level
+    END                    End whole list
+    
+    Path references:
+    <Parent/Child/Item>    Navigate down hierarchy
+    <https://url.com>      External URL
+    <file:/path/to/file>   File reference
+    
+    #{"TEXT FORMATTING".b}
+    
+    *bold text*        Bold formatting
+    /italic text/      Italic formatting
+    _underlined_       Underlined text
+    
+    Formatting can be combined and nested.
+    
+    #{"ADDITIVES".b}
+    
+    #{"Comments".fg("6")} (in parentheses or after semicolon):
+    (This is a comment)        Not executed in transitions
+    ; Line comment             Everything after ; is a comment
+    
+    #{"Quotes".fg("14")} (in quotation marks):
+    "Literal text"             Not interpreted as HyperList
+    'Also literal'             Single quotes work too
+    
+    #{"Tags".fg("184")} (hashtags):
+    #TODO #important           Markers for categorization
+    #ProjectAlpha              No spaces allowed in tags
+    
+    #{"SUBSTITUTIONS".b}
+    
+    Use curly brackets for variable substitution:
+    
+    [fruit = apples, oranges] Eat {fruit}
+    → Eat apples, then oranges
+    
+    Ask user for input; Use {input}
+    → Variable from user interaction
+    
+    #{"MULTI-LINE ITEMS".b}
+    
+    Use + prefix for items spanning multiple lines:
+    
+    + This is a long item that continues
+     on the next line with a space prefix
+    
+    If one item at a level is multi-line, all items at that
+    level must start with + or an identifier.
+    
+    #{"SEPARATORS".b}
+    
+    Newline → "then" (for sequence) or "and" (for children)
+    Semicolon → Compact multiple items on one line
+    
+    Examples:
+    Task A
+      Subtask 1
+      Subtask 2
+    → Task A consists of Subtask 1 and Subtask 2
+    
+    Task A; Task B; Task C
+    → Task A then Task B then Task C
+    
+    #{"CHANGE MARKUP".b}
+    
+    Special tags for document editing:
+    
+    ##<              Mark item for deletion
+    ##>              Mark item to be moved
+    ##<-             Indent item left
+    ##->             Indent item right  
+    ##Text##         Mark item as changed
+    
+    #{"LITERAL BLOCKS".b}
+    
+    Escape HyperList interpretation with backslash blocks:
+    
+    \\
+    Everything here is literal text
+    [This] is not a <qualifier> or reference
+    Until the closing backslash
+    \\
+    
+    #{"EXAMPLES".b}
+    
+    #{"Simple Todo List:".fg("1")}
+    [ ] Buy groceries
+      [ ] Milk
+      [ ] Bread
+    [X] Call dentist
+    [O] Write report
+    
+    #{"Process with Conditions:".fg("1")}
+    Morning routine
+      Check weather
+        [Raining] Get umbrella
+        [Cold] Wear jacket
+      Make coffee
+      [Weekday] Leave by 8am
+    
+    #{"Project with References:".fg("1")}
+    Project Setup
+      Define requirements <specs.doc>
+      Create timeline
+        [2 weeks] Development phase
+        [1 week] Testing <Testing/Plan>
+      Deploy to production
+    
+    #{"Complex Logic:".fg("1")}
+    System check
+      IF: Error detected
+        Log error
+        NOT: Continue processing
+        Send alert
+      ELSE:
+        Continue normal operation
+    
+    #{"═" * 60}
+    
+    #{"COMPLETE HYPERLIST DEFINITION (from specification v2.6)".b}
+    
+    HyperList
+      [1+] HyperList Item
+        [?] Starter; OR:
+          Identifier (Numbers: Format = "1.1.1.1", Mixed: Format = "1A1A")
+            [? Multi-line Item] The Identifier acts like the plus sign ("+")
+          Multi-line Indicator = "+"
+            + If one Item on a certain indent is multi-line, all Items on the same indent
+             (including single-line Items) must start with a plus sign ("+") or <Identifier>
+             and all lines on the same indent after the first line must start with a space
+        [?] Type
+          OR:
+            State = "S:" or "|"
+            Transition = "T:" or "/"
+          Children inherit Type from parent unless marked with different Type
+          Can be skipped when the Item is obviously a state or transition
+        Content; AND/OR:
+          Element; AND/OR:
+            Operator
+              Anything operating on an Item or a set of Items
+                [? Set of Items] Items are indented below the Operator
+              Can be any of the usual logical operators
+              Is written in capitals ending in a colon and a space
+                EXAMPLES: "AND: ", "OR: ", "AND/OR: ", "NOT: ", "IMPLIES: "
+              Can contain a Comment to specify the Operator
+                EXAMPLE: "OR(PRIORITY): "
+                  Sub-Items are to be chosen in the order of priority as listed
+              To make the Item run continuously, use "CONTINUOUS: "
+                Item is done concurrent with remaining Items
+                The Operator can be combined with a timestamp Tag
+                  EXAMPLE: "CONTINUOUS: YYYY-MM-07:" = Do the Item weekly
+              To show that an Item is encrypted or is to be encrypted, use "ENCRYPTION: "
+                OR:
+                  The encrypted block can be correctly indented
+                  The encrypted block contains indentation and is left justified
+                    This would seem to break the list, but is allowed
+              A block can be included of "literal text" negating any HyperList markup
+                Use a HyperList Item containing only the Operator "\\" to mark start/end
+                  EXAMPLE:
+                    \\
+                    This is a block of literal text...
+                    Where nothing counts as HyperList markup
+                    Thus - neither this: [?] nor THIS: <Test> - are seen as markup
+                    ...until we end this block with...
+                    \\
+            Qualifier
+              Any statement in square brackets that qualifies an Item
+              Specifies under what conditions an Item is to be executed, exists or is valid
+              Several Qualifiers can be strung together, separated by commas
+                All Qualifiers need to be fulfilled for the Item to be valid
+                EXAMPLE: "[+YYYY-MM-DD 02.30, Button color = Red, 4, ?] Push button"
+              Successive Qualifiers can be strung together, separated by periods; EXAMPLE:
+                "[Apples. Oranges. Grapes]"
+                  Do Item in the context of "apples", then "oranges", then "grapes"
+              EXAMPLES:
+                Do Item 3 times = "[3]"
+                Do Item if "the mail has arrived" = "[The mail has arrived]"
+                Do Item 2 times while "foo=true" = "[2, foo=true]"
+                Do Item from 3 to 5 times while "bar=false" = "[3..5, bar=false]"
+                Do Item 1 or more times = "[1+]"
+                Do Item 1 or more times while "Bob is polite" = "[1+, Bob is polite]"
+                Do Item up to 4 times only while "zoo=0" = "[<4, zoo=0]"
+              Optional Item = "[?]"
+              Timestamp Qualifier = "[YYYY-MM-DD hh.mm.ss]"
+                Shorten the format to the appropriate granularity
+              Time relations
+                Length of time to wait before doing the Item = "[+YYYY-MM-DD]"
+                Less than a certain length of time after previous Item = "[<+YYYY-MM-DD]"
+                More than a certain length of time after previous Item = "[>+YYYY-MM-DD]"
+                Length of time to wait before doing next Item = "[-YYYY-MM-DD]"
+                Less than a certain length of time before next Item = "[<-YYYY-MM-DD]"
+                More than a certain length of time before next Item = "[>-YYYY-MM-DD]"
+                Length of time to wait after doing referenced Item = "[+YYYY-MM-DD<Item>]"
+                Other obvious time indicators may be used; EXAMPLES:
+                  "[+1 week]"
+                  "[-2 Martian years]"
+                EXAMPLES:
+                  Wait one month before doing the Item = "[+YYYY-01-DD]"
+                  Do Item less than 4 days before next Item = "[<-YYYY-MM-04]"
+                  Wait one year and two days after Item X = "[+0001-00-02<X>]"
+                Time repetition
+                  Obvious/intuitive repetition
+                    EXAMPLES:
+                      "[YYYY-MM-03]" = The third of every month
+                      "[YYYY-12-DD]" = Every day in every December
+                      "[2011-MM-05]" = The fifth of every month of 2011
+                      "[Tue,Fri 12.00]" = Noon every Tuesday and Friday
+                  Strict convention
+                    Format = YYYY-MM-DD+X Day hh.mm+Y - YYYY-MM-DD hh.mm; EXAMPLES:
+                      "[2011-05-01+7 13.00]" = 2011-05-01 1pm, repeated every 7 days
+                      "[2011-05-01+2,3,2]" = Every 2, then 3, then 2 days, in repetition
+                      "[2011-05-01+2 - 2012-05-01]" = Every second day for one year
+                      "[2011-05-01 13.00+1]" = 2011-05-01 1pm, repeated every hour
+                      "[2011-05-01 Fri,Sat - 2011-10-01]" = Every Fri & Sat in time interval
+                Checking off Items
+                  Unchecked Item = "[_]"
+                  Item in progress = "[O]"
+                  Checked Item = "[x]"
+                    [?] Timestamp Tag after ("[x] YYYY-MM-DD hh.mm:ss:")
+            Substitution
+              Any statement in curly brackets is a substitution; EXAMPLES:
+                "[fruit = apples, oranges, bananas] Eat {fruit}"
+                  Eat apples, then oranges, then bananas
+                "Ask which painting she likes the best; Buy {painting}"
+            Property
+              Any attribute to the <Content>, ending in a colon and a space
+                Gives additional information or description to the Item
+              EXAMPLES:
+                "Location = Someplace:", "Color = Green:", "Strength = Medium:" and "In Norway:"
+            Description
+              The main body of the HyperList Item, the "meat" of the line
+          Additive; AND/OR:
+            Reference
+              + An Item name or Identifier, list name or anything else
+               enclosed in angle brackets ("<>"); EXAMPLES:
+                Reference to a website = "<http://www.isene.org/>"
+                Reference to a file = "<file:/path/to/filename>"
+              + There are two types of References; OR:
+                Redirection (hard Reference)
+                  An Item consisting only of a Reference is a redirection
+                    For a transition Item = Jump to referenced Item and execute
+                      + If the redirect is to jump back after executing
+                       the referenced Item (and its children), then add another
+                       set of angle brackets (<<Referenced Item>>)
+                        + EXAMPLE: Use this when creating subroutines at
+                         the end of the list
+                    For a state Item = Include the referenced Item
+                  An Item consisting only of the key word "SKIP"
+                    Ends the current HyperList level
+                  An Item consisting only of the key word "END"
+                    Ends the whole HyperList
+                Soft Reference
+                  Reference is part of an Item
+                    Look at referenced Item for info only
+                  Even softer Reference = have the Reference in parentheses
+                    An Item that is only something apropos
+              + A Reference to any Item upward in the HyperList is simply a
+               Reference to the Item's <Content>
+              + A Reference containing several levels down a HyperList needs a "/"
+               to separate each level, like a "path" (as with a URL) to the Item
+              + To make a Reference to a different branch in a HyperList,
+               start the Reference from the highest common level on the list
+               and include all Items down to the referenced Item
+                EXAMPLE: Reference from here to <Hyperlist Item/Starter/Identifier>
+              + For long Items in a Reference, concatenation can be used
+                The concatenation must be unique
+                  EXAMPLE: Reference from here to <Additive/Comment/Anything...>
+            Tag
+              A hash sign followed by any letters or numbers, used as a marker (#Tagged)
+              Is not executed as a HyperList command
+            Comment
+              Anything within parentheses is a Comment
+              Is not executed as a HyperList command
+            Quote
+              Anything in quotation marks is a Quote
+              Is not executed as a HyperList command
+            Change Markup; OR:
+              Deletion
+                Remove the Item by adding "##<" at the end of the Item
+              Motion; OPTIONS:
+                Move the Item by adding "##><Reference>"
+                  This moves the Item just below the referenced Item
+                Move the Item one level in by adding "##<-" at the end of the Item
+                Move the Item one level out by adding "##->" at the end of the Item
+                  EXAMPLE: Move an Item as a child to referenced Item = "##><Reference>##->"
+              Changed Item
+                Prefix an Item with "##Text##" to signify that a change has been made
+                  Add information inside the angle brackets as appropriate
+                    EXAMPLE: To show who changed it and when = "##John 2012-03-21##"
+        Separator
+          OR:
+            Semicolon
+              A semicolon is used to separate two HyperList Items on the same line
+            Newline
+              Used to add another Item on the same level
+              Indent
+                A Tab or an asterisk ("*")
+                Used to add a child
+                  A child adds information to its parent
+                  A child is another regular <HyperList Item>
+          Definition
+            A Separator and the same or less indent normally reads "then:"
+            [? Parent contains <Description>]
+              The Separator and right indent reads "with:" or "consists of:"
+            [? NOT: parent contains <Description>]
+              The Separator and right indent reads "applies to:"
+              A Separator between the children reads "and:"
+    
+    #{"═" * 60}
+    
+    HyperList is self-describing and Turing complete.
+    It can represent literally anything.
+    
+    For more information and examples:
+    #{"https://isene.org/hyperlist/".fg("5")}
+    
+    #{"═" * 60}
+    
+    Press 'q' to return to your list, PgUp/PgDn to scroll
+    DOC
+    
+    # Store current state
+    saved_items = @items.dup
+    saved_current = @current
+    saved_offset = @offset
+    saved_filename = @filename
+    saved_modified = @modified
+    
+    # Create temporary documentation items
+    @items = doc.split("\n").map { |line| {"text" => line, "level" => 0, "fold" => false, "raw" => true} }
+    @current = 0
+    @offset = 0
+    @modified = false
+    
+    # Documentation viewer loop
+    loop do
+      render_main
+      @footer.text = "HyperList Documentation | q: return | PgUp/PgDn: scroll"
+      @footer.refresh
+      
+      c = getchr
+      case c
+      when "q", "ESC"
+        break
+      when "?"
+        # Allow ?? to exit documentation
+        if getchr == "?"
+          break
+        end
+      when "j", "DOWN"
+        move_down
+      when "k", "UP"
+        move_up
+      when "PgUP"
+        page_up
+      when "PgDOWN"
+        page_down
+      when "HOME"
+        @current = 0
+        @offset = 0
+      when "END"
+        @current = @items.length - 1
+      when "g"
+        if getchr == "g"
+          @current = 0
+          @offset = 0
+        end
+      when "G"
+        @current = @items.length - 1
+      end
+    end
+    
+    # Restore original state
+    @items = saved_items
+    @current = saved_current
+    @offset = saved_offset
+    @filename = saved_filename
+    @modified = saved_modified
+  end
+  
+  def handle_command
+    @mode = :command
+    @command = @footer.ask(":", "")
+    @mode = :normal
+    @footer.clear  # Clear footer immediately
+    @footer.refresh
+    
+    return unless @command
+    
+    case @command
+    when "w", "write"
+      if @filename
+        save_file
+      else
+        filename_input = @footer.ask("Save as: ", "")
+        @filename = File.expand_path(filename_input) if filename_input && !filename_input.empty?
+        save_file if @filename && !@filename.empty?
+      end
+    when "q", "quit"
+      if @modified
+        @message = "Unsaved changes! Use :q! or Q to force quit"
+      else
+        quit
+      end
+    when "q!"
+      quit
+    when "wq", "x"
+      if @filename
+        save_file
+      else
+        filename_input = @footer.ask("Save as: ", "")
+        @filename = File.expand_path(filename_input) if filename_input && !filename_input.empty?
+        save_file if @filename && !@filename.empty?
+      end
+      quit
+    when /^w\s+(.+)/
+      @filename = File.expand_path($1)
+      save_file
+    when /^e\s+(.+)/
+      if @modified
+        @message = "Unsaved changes! Use :e! to force"
+      else
+        @filename = File.expand_path($1)
+        load_file(@filename)
+        @current = 0
+        @offset = 0
+      end
+    when /^e!\s+(.+)/
+      @filename = File.expand_path($1)
+      load_file(@filename)
+      @current = 0
+      @offset = 0
+      @modified = false
+    when /^(export|ex)\s+(md|markdown|html|txt|text)\s*(.*)$/
+      format = $2
+      export_file = $3.empty? ? nil : $3
+      export_to(format, export_file)
+    when /^(export|ex)$/
+      @message = "Usage: :export [md|html|txt] [filename] (or :ex)"
+    when "recent", "r"
+      show_recent_files
+    when "autosave on", "as on"
+      @auto_save_enabled = true
+      @message = "Auto-save enabled (every #{@auto_save_interval} seconds)"
+    when "autosave off", "as off"
+      @auto_save_enabled = false
+      @message = "Auto-save disabled"
+    when /^(autosave|as) (\d+)$/
+      @auto_save_interval = $2.to_i
+      @message = "Auto-save interval set to #{@auto_save_interval} seconds"
+    when "autosave", "as"
+      status = @auto_save_enabled ? "enabled" : "disabled"
+      @message = "Auto-save is #{status} (interval: #{@auto_save_interval}s)"
+    when "template", "templates", "t"
+      show_templates
+    when "foldlevel"
+      level = @footer.ask("Fold to level (0-9): ", "")
+      if level =~ /^[0-9]$/
+        expand_to_level(level.to_i)
+        @message = "Folded to level #{level}"
+      end
+    when "performance", "perf"
+      show_performance_stats
+    when "graph", "hypergraph", "g"
+      export_to_graph
+    when "vsplit", "vs"
+      toggle_split_view
+    when "split"
+      # Copy current section to split view
+      copy_section_to_split
+    else
+      @message = "Unknown command: #{@command}"
+    end
+  end
+  
+  def jump_to_reference
+    visible = get_visible_items
+    return if @current >= visible.length
+    
+    text = visible[@current]["text"]
+    
+    # Look for references in the format <reference> or <<reference>>
+    if text =~ /<{1,2}([^>]+)>{1,2}/
+      reference = $1
+      
+      # Check if it's a URL or file reference
+      if reference =~ /^(https?:\/\/|file:)/
+        open_external_reference(reference)
+        return
+      end
+      
+      # Search for the referenced item in the list
+      target_index = find_item_by_reference(reference)
+      
+      if target_index
+        @current = target_index
+        @message = "Jumped to: #{reference}"
+      else
+        @message = "Reference not found: #{reference}"
+      end
+    else
+      @message = "No reference found on this line"
+    end
+  end
+  
+  def open_file_reference
+    visible = get_visible_items
+    return if @current >= visible.length
+    
+    text = visible[@current]["text"]
+    
+    # Look for file references
+    if text =~ /<file:([^>]+)>/
+      filepath = $1
+      open_external_file(filepath)
+    elsif text =~ /<([^>]+\.[^>]+)>/  # Anything with an extension
+      filepath = $1
+      if File.exist?(filepath)
+        open_external_file(filepath)
+      else
+        @message = "File not found: #{filepath}"
+      end
+    else
+      @message = "No file reference found on this line"
+    end
+  end
+  
+  def find_item_by_reference(reference)
+    # Handle path-style references (e.g., "Item/SubItem/Detail")
+    parts = reference.split('/')
+    
+    visible = get_visible_items
+    
+    # First try exact match
+    visible.each_with_index do |item, idx|
+      if item["text"].include?(reference) || 
+         item["text"].gsub(/\[[^\]]*\]/, '').strip.include?(reference)
+        return idx
+      end
+    end
+    
+    # Try matching by path components
+    if parts.length > 1
+      current_level = 0
+      found_indices = []
+      
+      parts.each do |part|
+        found = false
+        visible.each_with_index do |item, idx|
+          next if found_indices.include?(idx)
+          
+          clean_text = item["text"].gsub(/\[[^\]]*\]/, '').strip
+          if clean_text.include?(part) && item["level"] >= current_level
+            found_indices << idx
+            current_level = item["level"]
+            found = true
+            break
+          end
+        end
+        
+        return nil unless found
+      end
+      
+      return found_indices.last
+    end
+    
+    # Try partial match
+    visible.each_with_index do |item, idx|
+      clean_text = item["text"].gsub(/\[[^\]]*\]/, '').strip
+      if clean_text.downcase.include?(reference.downcase)
+        return idx
+      end
+    end
+    
+    nil
+  end
+  
+  def open_external_reference(url)
+    # Try to open URL in default browser
+    if RUBY_PLATFORM =~ /darwin/
+      system("open", url)
+    elsif RUBY_PLATFORM =~ /linux/
+      system("xdg-open", url)
+    else
+      @message = "Cannot open URL on this platform"
+    end
+  end
+  
+  def open_external_file(filepath)
+    # Expand path if needed
+    filepath = File.expand_path(filepath)
+    
+    if File.exist?(filepath)
+      if filepath.end_with?('.hl')
+        # Open HyperList file in this app
+        if @modified
+          @message = "Save current file first"
+        else
+          @filename = File.expand_path(filepath)
+          load_file(@filename)
+          @current = 0
+          @offset = 0
+          @modified = false
+        end
+      else
+        # Open in default application
+        if RUBY_PLATFORM =~ /darwin/
+          system("open", filepath)
+        elsif RUBY_PLATFORM =~ /linux/
+          system("xdg-open", filepath)
+        else
+          @message = "Cannot open file on this platform"
+        end
+      end
+    else
+      @message = "File not found: #{filepath}"
+    end
+  end
+  
+  def load_templates
+    {
+      "project" => [
+        {"text" => "Project: [Project Name]", "level" => 0},
+        {"text" => "[_] Define project scope", "level" => 1},
+        {"text" => "[_] Identify stakeholders", "level" => 1},
+        {"text" => "[_] Create timeline", "level" => 1},
+        {"text" => "Planning", "level" => 1},
+        {"text" => "[_] Resource allocation", "level" => 2},
+        {"text" => "[_] Risk assessment", "level" => 2},
+        {"text" => "[_] Budget planning", "level" => 2},
+        {"text" => "Implementation", "level" => 1},
+        {"text" => "[_] Phase 1: Foundation", "level" => 2},
+        {"text" => "[_] Phase 2: Development", "level" => 2},
+        {"text" => "[_] Phase 3: Testing", "level" => 2},
+        {"text" => "[_] Phase 4: Deployment", "level" => 2},
+        {"text" => "Review", "level" => 1},
+        {"text" => "[_] Gather feedback", "level" => 2},
+        {"text" => "[_] Document lessons learned", "level" => 2},
+        {"text" => "[_] Archive project materials", "level" => 2}
+      ],
+      "meeting" => [
+        {"text" => "Meeting: [Title]", "level" => 0},
+        {"text" => "Date: #{Time.now.strftime('%Y-%m-%d %H:%M')}", "level" => 1},
+        {"text" => "Location: [Conference Room/Online]", "level" => 1},
+        {"text" => "Attendees", "level" => 1},
+        {"text" => "[Name 1]", "level" => 2},
+        {"text" => "[Name 2]", "level" => 2},
+        {"text" => "Agenda", "level" => 1},
+        {"text" => "[_] Opening remarks", "level" => 2},
+        {"text" => "[_] Review previous action items", "level" => 2},
+        {"text" => "[_] Main topics", "level" => 2},
+        {"text" => "Topic 1: [Description]", "level" => 3},
+        {"text" => "Topic 2: [Description]", "level" => 3},
+        {"text" => "[_] Q&A session", "level" => 2},
+        {"text" => "[_] Next steps", "level" => 2},
+        {"text" => "Action Items", "level" => 1},
+        {"text" => "[_] [Action 1] - Assigned to: [Name] - Due: [Date]", "level" => 2},
+        {"text" => "[_] [Action 2] - Assigned to: [Name] - Due: [Date]", "level" => 2},
+        {"text" => "Notes", "level" => 1},
+        {"text" => "[Add meeting notes here]", "level" => 2}
+      ],
+      "daily" => [
+        {"text" => "Daily Plan: #{Time.now.strftime('%Y-%m-%d')}", "level" => 0},
+        {"text" => "Morning Routine", "level" => 1},
+        {"text" => "[_] Review calendar", "level" => 2},
+        {"text" => "[_] Check emails", "level" => 2},
+        {"text" => "[_] Plan priorities", "level" => 2},
+        {"text" => "Priority Tasks", "level" => 1},
+        {"text" => "[_] [High Priority Task 1]", "level" => 2},
+        {"text" => "[_] [High Priority Task 2]", "level" => 2},
+        {"text" => "[_] [High Priority Task 3]", "level" => 2},
+        {"text" => "Regular Tasks", "level" => 1},
+        {"text" => "[_] [Task 1]", "level" => 2},
+        {"text" => "[_] [Task 2]", "level" => 2},
+        {"text" => "Meetings/Appointments", "level" => 1},
+        {"text" => "[Time] - [Meeting/Event]", "level" => 2},
+        {"text" => "Notes", "level" => 1},
+        {"text" => "[Daily observations and reflections]", "level" => 2}
+      ],
+      "checklist" => [
+        {"text" => "Checklist: [Title]", "level" => 0},
+        {"text" => "[_] Item 1", "level" => 1},
+        {"text" => "[_] Item 2", "level" => 1},
+        {"text" => "[_] Item 3", "level" => 1},
+        {"text" => "[_] Item 4", "level" => 1},
+        {"text" => "[_] Item 5", "level" => 1}
+      ],
+      "brainstorm" => [
+        {"text" => "Brainstorming: [Topic]", "level" => 0},
+        {"text" => "Problem Statement", "level" => 1},
+        {"text" => "[Define the problem or opportunity]", "level" => 2},
+        {"text" => "Ideas", "level" => 1},
+        {"text" => "Category 1", "level" => 2},
+        {"text" => "Idea A", "level" => 3},
+        {"text" => "Idea B", "level" => 3},
+        {"text" => "Category 2", "level" => 2},
+        {"text" => "Idea C", "level" => 3},
+        {"text" => "Idea D", "level" => 3},
+        {"text" => "Evaluation Criteria", "level" => 1},
+        {"text" => "Feasibility", "level" => 2},
+        {"text" => "Impact", "level" => 2},
+        {"text" => "Resources Required", "level" => 2},
+        {"text" => "Next Steps", "level" => 1},
+        {"text" => "[_] Research top ideas", "level" => 2},
+        {"text" => "[_] Create action plan", "level" => 2}
+      ],
+      "recipe" => [
+        {"text" => "Recipe: [Name]", "level" => 0},
+        {"text" => "Servings: [Number]", "level" => 1},
+        {"text" => "Prep Time: [Time]", "level" => 1},
+        {"text" => "Cook Time: [Time]", "level" => 1},
+        {"text" => "Ingredients", "level" => 1},
+        {"text" => "[Amount] [Ingredient 1]", "level" => 2},
+        {"text" => "[Amount] [Ingredient 2]", "level" => 2},
+        {"text" => "[Amount] [Ingredient 3]", "level" => 2},
+        {"text" => "Instructions", "level" => 1},
+        {"text" => "[_] Step 1: [Description]", "level" => 2},
+        {"text" => "[_] Step 2: [Description]", "level" => 2},
+        {"text" => "[_] Step 3: [Description]", "level" => 2},
+        {"text" => "Notes", "level" => 1},
+        {"text" => "[Tips, variations, serving suggestions]", "level" => 2}
+      ]
+    }
+  end
+  
+  def show_templates
+    # Save current state
+    saved_items = @items.dup
+    saved_current = @current
+    saved_offset = @offset
+    saved_filename = @filename
+    saved_modified = @modified
+    
+    # Create items for template selection
+    @items = []
+    @items << {"text" => "TEMPLATES (press Enter to insert, q to cancel)", "level" => 0, "fold" => false, "raw" => true}
+    @items << {"text" => "="*50, "level" => 0, "fold" => false, "raw" => true}
+    
+    template_list = [
+      ["project", "Project Plan - Complete project management template"],
+      ["meeting", "Meeting Agenda - Structure for meeting notes"],
+      ["daily", "Daily Planner - Daily task and schedule template"],
+      ["checklist", "Simple Checklist - Basic checkbox list"],
+      ["brainstorm", "Brainstorming Session - Idea generation template"],
+      ["recipe", "Recipe - Cooking recipe structure"]
+    ]
+    
+    template_list.each_with_index do |(key, desc), idx|
+      @items << {"text" => "#{idx+1}. #{key.capitalize}: #{desc}", "level" => 0, "fold" => false, "raw" => true, "template_key" => key}
+    end
+    
+    @current = 2  # Start at first template
+    @offset = 0
+    @modified = false
+    
+    selected_template = nil
+    
+    # Template viewer loop
+    loop do
+      render_main
+      @footer.text = "Templates | Enter: insert | q: cancel | j/k: navigate"
+      @footer.refresh
+      
+      c = getchr
+      case c
+      when "q", "ESC"
+        # Restore original state
+        @items = saved_items
+        @current = saved_current
+        @offset = saved_offset
+        @filename = saved_filename
+        @modified = saved_modified
+        break
+      when "j", "DOWN"
+        move_down if @current < @items.length - 1
+      when "k", "UP"
+        move_up if @current > 2  # Don't go above first template
+      when "ENTER", "l"
+        if @current >= 2 && @items[@current]["template_key"]
+          selected_template = @items[@current]["template_key"]
+          break
+        end
+      when /^[1-6]$/
+        # Allow number key selection
+        idx = c.to_i - 1
+        if idx < template_list.length
+          selected_template = template_list[idx][0]
+          break
+        end
+      end
+    end
+    
+    # Insert selected template
+    if selected_template
+      # Restore original state first
+      @items = saved_items
+      @current = saved_current
+      @offset = saved_offset
+      @filename = saved_filename
+      @modified = saved_modified
+      
+      insert_template(selected_template)
+    end
+  end
+  
+  def insert_template(template_key)
+    template_items = @templates[template_key]
+    return unless template_items
+    
+    save_state_for_undo
+    
+    # Get current item level to adjust template indentation
+    current_level = @items[@current]["level"]
+    
+    # Insert template items after current position
+    insertion_point = @current + 1
+    
+    template_items.each_with_index do |template_item, idx|
+      new_item = {
+        "text" => template_item["text"],
+        "level" => current_level + template_item["level"],
+        "fold" => false
+      }
+      @items.insert(insertion_point + idx, new_item)
+    end
+    
+    @modified = true
+    @message = "Template '#{template_key}' inserted"
+  end
+  
+  def start_macro_recording(key)
+    @macro_recording = true
+    @macro_key = key
+    @macro_buffer = []
+    @message = "Recording macro to register '#{key}'..."
+  end
+  
+  def stop_macro_recording
+    if @macro_key && !@macro_buffer.empty?
+      # Remove the 'q' that stopped recording from the buffer if it's there
+      @macro_buffer.pop if @macro_buffer.last == "q"
+      @macro_register[@macro_key] = @macro_buffer.dup
+      @message = "Macro recorded to register '#{@macro_key}' (#{@macro_buffer.length} actions)"
+    else
+      @message = "Macro recording cancelled"
+    end
+    @macro_recording = false
+    @macro_key = nil
+    @macro_buffer = []
+  end
+  
+  def play_macro(key)
+    macro = @macro_register[key]
+    if macro && !macro.empty?
+      @message = "Playing macro '#{key}'..."
+      render_footer
+      
+      # Replay each action in the macro
+      macro.each do |action|
+        # Simulate the key press
+        case @mode
+        when :normal
+          process_normal_key(action)
+        when :insert
+          # Handle insert mode separately if needed
+          @mode = :normal if action == "ESC"
+        end
+        
+        # Update display after each action for visual feedback
+        render
+      end
+      
+      @message = "Macro '#{key}' executed (#{macro.length} actions)"
+    else
+      @message = "No macro in register '#{key}'"
+    end
+  end
+  
+  def process_normal_key(c)
+    # This processes a single key in normal mode for macro replay
+    case c
+    when "j", "DOWN"
+      move_down
+    when "k", "UP"
+      move_up
+    when "h"
+      go_to_parent
+    when "l"
+      go_to_first_child
+    when "o"
+      insert_line_below
+    when "O"
+      insert_line_above
+    when "a"
+      insert_child
+    when "d"
+      # Check if it's dd
+      if getchr == "d"
+        delete_line
+      end
+    when "y"
+      # Check if it's yy
+      if getchr == "y"
+        copy_line
+      end
+    when "p"
+      paste
+    when "v"
+      toggle_checkbox
+    when "V"
+      toggle_checkbox_with_date
+    when "TAB"
+      indent_with_children
+    when "S-TAB"
+      unindent_with_children
+    when "RIGHT"
+      indent_line
+    when "LEFT"
+      unindent_line
+    when " "
+      toggle_fold
+    when "u"
+      undo
+    when "/"
+      # Skip search in macros for now
+      @message = "Search skipped in macro"
+    when "i", "ENTER"
+      # Skip interactive editing in macros
+      @message = "Text editing skipped in macro"
+    end
+  end
+  
+  def toggle_split_view
+    @split_view = !@split_view
+    if @split_view
+      @split_items = @items.dup  # Copy current items to split view
+      @split_current = @current
+      @split_offset = @offset
+      @active_pane = :main
+      set_message("Split view enabled. Use 'ww' to switch panes.")
+    else
+      @split_items = []
+      set_message("Split view disabled")
+    end
+    setup_ui
+    render  # Re-render everything after changing the UI layout
+  end
+  
+  def copy_section_to_split
+    if !@split_view
+      toggle_split_view
+    end
+    
+    # Find the current section (same or less indented level)
+    current_item = @items[@current]
+    current_level = current_item["level"]
+    
+    # Find section boundaries
+    start_idx = @current
+    end_idx = @current
+    
+    # Find start of section (go up to same or less level)
+    (0...@current).reverse_each do |idx|
+      if @items[idx]["level"] <= current_level
+        start_idx = idx
+        break
+      end
+    end
+    
+    # Find end of section
+    (@current + 1...@items.length).each do |idx|
+      if @items[idx]["level"] <= current_level
+        break
+      end
+      end_idx = idx
+    end
+    
+    # Copy section to split view
+    @split_items = @items[start_idx..end_idx]
+    @split_current = 0
+    @split_offset = 0
+    
+    @message = "Section copied to split view (#{@split_items.length} items)"
+  end
+  
+  def handle_window_command
+    c = getchr
+    case c
+    when "w"
+      # Switch active pane
+      if @split_view
+        @active_pane = (@active_pane == :main) ? :split : :main
+        @message = "Switched to #{@active_pane} pane"
+      end
+    when "v"
+      # Vertical split
+      toggle_split_view
+    when "o"
+      # Close split, keep only current pane
+      @split_view = false
+      setup_ui
+      @message = "Split view closed"
+    when "="
+      # Make panes equal size (already equal in our implementation)
+      @message = "Panes are equal size"
+    end
+  end
+  
+  def render_split_pane
+    return unless @split_view && @split_pane
+    
+    # Similar to render_main but for split pane
+    view_height = @split_pane.h
+    if @split_current < @split_offset
+      @split_offset = @split_current
+    elsif @split_current >= @split_offset + view_height
+      @split_offset = @split_current - view_height + 1
+    end
+    
+    lines = []
+    start_idx = @split_offset
+    end_idx = [@split_offset + view_height, @split_items.length].min
+    
+    (start_idx...end_idx).each do |idx|
+      item = @split_items[idx]
+      next unless item
+      
+      line = "    " * item["level"]
+      
+      # Add fold indicator
+      if has_children_in_array?(idx, @split_items) && item["fold"]
+        line += "▶ ".fg("245")
+      elsif has_children_in_array?(idx, @split_items)
+        line += "▷ ".fg("245")
+      else
+        line += "  "
+      end
+      
+      # Process text (simplified for split view)
+      line += process_text(item["text"], false)
+      
+      # Highlight current line in split pane
+      if idx == @split_current
+        line = line.r  # Always use reverse (white background) for current line
+      end
+      
+      lines << line
+    end
+    
+    @split_pane.text = lines.join("\n")
+    @split_pane.refresh
+  end
+  
+  def has_children_in_array?(idx, items_array)
+    return false if idx >= items_array.length - 1
+    current_level = items_array[idx]["level"]
+    next_level = items_array[idx + 1]["level"]
+    next_level > current_level
+  end
+  
+  def move_in_active_pane(direction)
+    if @split_view && @active_pane == :split
+      case direction
+      when :down
+        @split_current = [@split_current + 1, @split_items.length - 1].min if @split_current < @split_items.length - 1
+      when :up
+        @split_current = [@split_current - 1, 0].max if @split_current > 0
+      end
+    else
+      case direction
+      when :down
+        move_down
+      when :up
+        move_up
+      end
+    end
+  end
+  
+  def show_performance_stats
+    total_items = @items.length
+    visible_items = get_visible_items.length
+    folded_count = @items.count { |item| item["fold"] }
+    cache_size = @processed_cache.size
+    split_info = @split_view ? " | Split: #{@split_items.length} items" : ""
+    
+    @message = "Items: #{total_items} (#{visible_items} visible, #{folded_count} folded) | Cache: #{cache_size}#{split_info}"
+  end
+  
+  def export_to_graph
+    # Ask user for graph options - return nil if cancelled (ESC pressed)
+    graph_type = @footer.ask("Graph type (state/trans) - ESC to cancel: ", "")
+    return if graph_type.empty?
+    return unless graph_type =~ /^(state|trans)$/
+    
+    direction = @footer.ask("Direction (TB/BT/LR/RL) - ESC to cancel: ", "")
+    return if direction.empty?
+    return unless direction =~ /^(TB|BT|LR|RL)$/
+    
+    line_style = @footer.ask("Line style (spline/ortho/poly) - ESC to cancel: ", "")
+    return if line_style.empty?
+    return unless line_style =~ /^(spline|ortho|polyline)$/
+    line_style = "polyline" if line_style == "poly"
+    
+    theme = @footer.ask("Theme (default/business/tech/pastel) - ESC to cancel: ", "")
+    return if theme.empty?
+    return unless theme =~ /^(default|business|tech|pastel)$/
+    
+    # Generate default output filename based on current file
+    default_output = if @filename
+      File.basename(@filename, File.extname(@filename)) + ".png"
+    else
+      "hyperlist_graph.png"
+    end
+    
+    output_file = @footer.ask("Output filename (.png) - ESC to cancel: ", default_output)
+    return if output_file == default_output && output_file.empty?  # If default was empty and user pressed ESC
+    return if !output_file || output_file.strip.empty?
+    output_file += ".png" unless output_file.end_with?(".png")
+    
+    open_after = @footer.ask("Open graph after generation? (y/n) - ESC to cancel: ", "")
+    return if open_after.empty?
+    open_after = open_after.downcase == "y"
+    
+    # Generate the graph
+    begin
+      dot_content = generate_dot_graph(graph_type, direction, line_style, theme)
+      
+      # Write DOT file temporarily
+      dot_file = output_file.sub(/\.png$/, '.dot')
+      File.write(dot_file, dot_content)
+      
+      # Generate PNG using Graphviz
+      system("dot -Tpng #{dot_file} -o #{output_file}")
+      
+      # Clean up DOT file
+      File.delete(dot_file) if File.exist?(dot_file)
+      
+      if File.exist?(output_file)
+        @message = "Graph exported to #{output_file}"
+        
+        # Open the graph if requested
+        if open_after
+          # Try different methods to open the file
+          if system("which xdg-open > /dev/null 2>&1")
+            system("xdg-open #{output_file} 2>/dev/null &")
+            @message += " (opened)"
+          elsif system("which runmailcap > /dev/null 2>&1")
+            system("runmailcap #{output_file} 2>/dev/null &")
+            @message += " (opened)"
+          elsif system("which open > /dev/null 2>&1")  # macOS
+            system("open #{output_file} 2>/dev/null &")
+            @message += " (opened)"
+          else
+            @message += " (could not auto-open)"
+          end
+        end
+      else
+        @message = "Failed to generate graph. Is Graphviz installed?"
+      end
+    rescue => e
+      @message = "Graph export failed: #{e.message}"
+    end
+  end
+  
+  def generate_dot_graph(type, direction, spline, theme)
+    # Theme definitions
+    themes = {
+      'default' => {
+        node_color: 'black',
+        edge_color: 'black',
+        font: 'Helvetica',
+        bgcolor: 'white'
+      },
+      'business' => {
+        node_color: '#2c3e50',
+        edge_color: '#34495e',
+        font: 'Arial',
+        bgcolor: '#ecf0f1',
+        node_style: 'rounded,filled',
+        node_fillcolor: '#3498db',
+        node_fontcolor: 'white'
+      },
+      'tech' => {
+        node_color: '#00ff00',
+        edge_color: '#00aa00',
+        font: 'Courier',
+        bgcolor: 'black',
+        node_fontcolor: '#00ff00'
+      },
+      'pastel' => {
+        node_color: '#8b7d6b',
+        edge_color: '#cdaa7d',
+        font: 'Georgia',
+        bgcolor: '#fff8dc',
+        node_style: 'filled',
+        node_fillcolor: '#ffe4b5'
+      }
+    }
+    
+    current_theme = themes[theme] || themes['default']
+    
+    dot = "digraph HyperGraph {\n"
+    dot << "rankdir=#{direction}\n"
+    dot << "splines=#{spline}\n"
+    dot << "bgcolor=\"#{current_theme[:bgcolor]}\"\n" if current_theme[:bgcolor]
+    dot << "overlap=false\n"
+    
+    # Edge settings
+    dot << "edge [fontsize=8 len=1"
+    dot << " color=\"#{current_theme[:edge_color]}\"" if current_theme[:edge_color]
+    dot << "]\n"
+    
+    # Node settings
+    dot << "node ["
+    dot << "shape=#{type == 'trans' ? 'box' : 'ellipse'}"
+    dot << " color=\"#{current_theme[:node_color]}\"" if current_theme[:node_color]
+    dot << " fontname=\"#{current_theme[:font]}\"" if current_theme[:font]
+    dot << " fontcolor=\"#{current_theme[:node_fontcolor]}\"" if current_theme[:node_fontcolor]
+    dot << " style=\"#{current_theme[:node_style]}\"" if current_theme[:node_style]
+    dot << " fillcolor=\"#{current_theme[:node_fillcolor]}\"" if current_theme[:node_fillcolor]
+    dot << "]\n\n"
+    
+    # Process HyperList items into nodes
+    @items.each_with_index do |item, idx|
+      next if item["raw"]  # Skip raw items like help text
+      
+      node_id = "node_#{idx}"
+      label = escape_dot_label(item["text"])
+      
+      # Check for special item types and set attributes
+      attributes = []
+      attributes << "label=\"#{label}\""
+      
+      # Handle operators (AND:, OR:, etc.)
+      if item["text"] =~ /^\s*([A-Z][A-Z_\-() \/]*):(.*)$/
+        operator = $1
+        if ["AND", "OR", "NOT", "IMPLIES", "CONTINUOUS"].include?(operator)
+          attributes << "shape=doubleoctagon"
+          attributes << "width=0.2 height=0.2"
+        end
+      end
+      
+      # Handle qualifiers (items with [])
+      if item["text"] =~ /\[([^\]]+)\]/
+        qualifier = $1
+        case qualifier
+        when "?"
+          attributes << "shape=diamond"  # Optional items as diamonds
+        when "_"
+          label = "☐ #{label}"
+          attributes[0] = "label=\"#{label}\""
+        when "x"
+          label = "☑ #{label}"
+          attributes[0] = "label=\"#{label}\""
+        when "O"
+          label = "⊙ #{label}"
+          attributes[0] = "label=\"#{label}\""
+        else
+          # Check for conditions
+          if qualifier =~ /^[^,]+$/
+            attributes << "shape=diamond"
+            attributes << "tooltip=\"Condition: #{qualifier}\""
+          end
+        end
+      end
+      
+      # Handle properties (Color:, Location:, etc.)
+      if item["text"] =~ /^\s*([A-Z][a-z]+.*?):\s+(.+)$/
+        property = $1
+        value = $2
+        if property.downcase == "color" && value =~ /(\w+)/
+          color_val = $1.downcase
+          # Map common color names if needed
+          color_map = {
+            'red' => 'red', 'green' => 'green', 'blue' => 'blue',
+            'yellow' => 'yellow', 'orange' => 'orange', 'purple' => 'purple'
+          }
+          if color_map[color_val]
+            attributes << "color=\"#{color_map[color_val]}\""
+            attributes << "style=filled"
+            attributes << "fillcolor=\"#{color_map[color_val]}20\""  # Light fill
+          end
+        end
+      end
+      
+      # Handle tags
+      if item["text"] =~ /#(\w+)/
+        tags = item["text"].scan(/#(\w+)/).flatten
+        attributes << "tooltip=\"Tags: #{tags.join(', ')}\""
+      end
+      
+      # Add node to graph
+      dot << "\"#{node_id}\" [#{attributes.join(', ')}]\n"
+    end
+    
+    dot << "\n"
+    
+    # Add edges based on type
+    if type == 'state'
+      # State graph: hierarchical connections
+      @items.each_with_index do |item, idx|
+        next if item["raw"]
+        
+        # Find children
+        children = find_graph_children(idx)
+        children.each do |child_idx|
+          from_node = "node_#{idx}"
+          to_node = "node_#{child_idx}"
+          
+          edge_attrs = []
+          
+          # Style based on operator
+          if item["text"] =~ /^\s*OR:/
+            edge_attrs << "style=\"dashed\""
+          elsif item["text"] =~ /^\s*AND:/
+            edge_attrs << "color=\"black:black\""
+          end
+          
+          dot << "\"#{from_node}\" -> \"#{to_node}\""
+          dot << " [#{edge_attrs.join(', ')}]" if edge_attrs.any?
+          dot << "\n"
+        end
+        
+        # Handle references (<item>)
+        if item["text"] =~ /<([^>]+)>/
+          ref = $1
+          target_idx = find_reference_target(ref)
+          if target_idx
+            dot << "\"node_#{idx}\" -> \"node_#{target_idx}\" [style=\"dotted\"]\n"
+          end
+        end
+      end
+    else
+      # Transition graph: sequential flow with special handling
+      @items.each_with_index do |item, idx|
+        next if item["raw"]
+        
+        # Special handling for OR/AND operators
+        if item["text"] =~ /^\s*(OR|AND):/
+          operator = $1
+          children = find_graph_children(idx)
+          
+          if children.any?
+            # Connect operator to all its children
+            children.each do |child_idx|
+              style = operator == "OR" ? "style=\"dashed\"" : "color=\"black:black\""
+              dot << "\"node_#{idx}\" -> \"node_#{child_idx}\" [#{style}]\n"
+            end
+            
+            # Find convergence point
+            converge_idx = find_next_at_level_or_above(idx, item["level"])
+            if converge_idx
+              # Connect all children to convergence point
+              children.each do |child_idx|
+                last_in_branch = find_last_in_branch(child_idx)
+                dot << "\"node_#{last_in_branch}\" -> \"node_#{converge_idx}\"\n"
+              end
+            end
+            next
+          end
+        end
+        
+        # Normal sequential flow
+        next_idx = find_next_graph_item(idx)
+        if next_idx
+          from_node = "node_#{idx}"
+          to_node = "node_#{next_idx}"
+          dot << "\"#{from_node}\" -> \"#{to_node}\"\n"
+        end
+      end
+    end
+    
+    dot << "}\n"
+    dot
+  end
+  
+  def escape_dot_label(text)
+    # Clean and escape text for DOT labels
+    label = text.dup
+    
+    # Remove ANSI color codes if present
+    label.gsub!(/\e\[([0-9;]+)m/, '')
+    label.gsub!(/\[38;5;\d+m/, '')
+    
+    # Remove leading/trailing whitespace and indentation
+    label.strip!
+    
+    # Remove checkboxes at the beginning
+    label.gsub!(/^\[([x_O])\]\s*/, '')
+    
+    # Truncate if too long
+    if label.length > 50
+      label = label[0..47] + "..."
+    end
+    
+    # Escape special characters for DOT
+    label.gsub('\\', '\\\\').gsub('"', '\"').gsub('#', '\#')
+  end
+  
+  def find_graph_children(parent_idx)
+    children = []
+    parent_level = @items[parent_idx]["level"]
+    
+    (parent_idx + 1...@items.length).each do |i|
+      next if @items[i]["raw"]
+      if @items[i]["level"] > parent_level
+        children << i if @items[i]["level"] == parent_level + 1
+      else
+        break
+      end
+    end
+    
+    children
+  end
+  
+  def find_reference_target(ref)
+    # Find item containing the reference text
+    @items.find_index { |item| !item["raw"] && item["text"].include?(ref) }
+  end
+  
+  def find_next_at_level_or_above(start_idx, level)
+    (start_idx + 1...@items.length).each do |i|
+      next if @items[i]["raw"]
+      return i if @items[i]["level"] <= level
+    end
+    nil
+  end
+  
+  def find_last_in_branch(start_idx)
+    current_level = @items[start_idx]["level"]
+    last_idx = start_idx
+    
+    (start_idx + 1...@items.length).each do |i|
+      next if @items[i]["raw"]
+      if @items[i]["level"] > current_level
+        last_idx = i
+      else
+        break
+      end
+    end
+    
+    last_idx
+  end
+  
+  def find_next_graph_item(idx)
+    current_level = @items[idx]["level"]
+    
+    # Find next item at same level or first child
+    (idx + 1...@items.length).each do |i|
+      next if @items[i]["raw"]
+      
+      # Return if same level or immediate child
+      if @items[i]["level"] == current_level || @items[i]["level"] == current_level + 1
+        return i
+      elsif @items[i]["level"] < current_level
+        # Going back up the hierarchy
+        break
+      end
+    end
+    
+    nil
+  end
+  
+  def set_message(text)
+    @message = text
+    @message_timeout = nil  # Reset timeout so message shows immediately
+  end
+  
+  def set_mark(mark)
+    @marks ||= {}
+    visible = get_visible_items
+    if @current < visible.length
+      real_idx = @items.index(visible[@current])
+      @marks[mark] = real_idx
+      @message = "Mark '#{mark}' set"
+    end
+  end
+  
+  def jump_to_mark(mark)
+    @marks ||= {}
+    if @marks[mark]
+      # Save current position for ''
+      @previous_position = @current
+      
+      # Find the marked item in visible items
+      target_idx = @marks[mark]
+      visible = get_visible_items
+      visible_idx = visible.find_index { |item| @items.index(item) == target_idx }
+      
+      if visible_idx
+        @current = visible_idx
+        @message = "Jumped to mark '#{mark}'"
+      else
+        @message = "Mark '#{mark}' item is not visible (may be folded)"
+      end
+    else
+      @message = "Mark '#{mark}' not set"
+    end
+  end
+  
+  def jump_to_previous_position
+    if @previous_position
+      old_pos = @current
+      @current = @previous_position
+      @previous_position = old_pos
+      @message = "Jumped to previous position"
+    else
+      @message = "No previous position"
+    end
+  end
+  
+  def quit
+    Cursor.show
+    Rcurses.clear_screen
+    exit
+  end
+  
+  def run
+    render
+    
+    loop do
+      # Check for auto-save
+      check_auto_save if @auto_save_enabled
+      
+      c = getchr
+      
+      # Track last key for double-key combinations
+      prev_key = @last_key
+      @last_key = c
+      
+      # Record macro if recording (but not the 'q' that stops recording)
+      if @macro_recording && !(c == "q")
+        @macro_buffer << c
+      end
+      
+      case @mode
+      when :normal
+        case c
+        when "r"  # Redo
+          redo_change
+        when "?"
+          show_help
+        when "j", "DOWN"
+          move_in_active_pane(:down)
+        when "k", "UP"
+          move_in_active_pane(:up)
+        when "h"
+          go_to_parent
+        when "l"
+          go_to_first_child
+        when "LEFT"
+          # Unindent only the current item
+          indent_left(false)
+        when "RIGHT"
+          # Indent only the current item
+          indent_right(false)
+        when "PgUP"  # Page Up
+          page_up
+        when "PgDOWN"  # Page Down
+          page_down
+        when "HOME"   # Home
+          @current = 0
+          @offset = 0
+        when "END"    # End
+          @current = get_visible_items.length - 1
+        when "g"  # Go to top (was gg)
+          @current = 0
+          @offset = 0
+        when "G"  # Go to bottom
+          @current = get_visible_items.length - 1
+        when "R"  # Jump to reference (was gr)
+          jump_to_reference
+        when "F"  # Open file reference (was gf)
+          open_file_reference
+        when " "
+          toggle_fold
+        when "z"
+          next_c = getchr
+          case next_c
+          when "a"
+            @items.each { |item| item["fold"] = !item["fold"] }
+          when "R"
+            @items.each { |item| item["fold"] = false }
+          when "M"
+            @items.each_with_index do |item, idx|
+              item["fold"] = true if has_children?(idx, @items)
+            end
+          when "o"
+            visible = get_visible_items
+            if @current < visible.length
+              real_idx = @items.index(visible[@current])
+              @items[real_idx]["fold"] = false if real_idx
+            end
+          when "c"
+            visible = get_visible_items
+            if @current < visible.length
+              real_idx = @items.index(visible[@current])
+              if real_idx && has_children?(real_idx, @items)
+                @items[real_idx]["fold"] = true
+              end
+            end
+          end
+        when '0'
+          # Single 0 pressed, ask for fold level
+          level = @footer.ask("Fold to level: ", "")
+          if level =~ /^\d+$/
+            expand_to_level(level.to_i)
+            @message = "Folded to level #{level}"
+          end
+        when /[1-9]/
+          expand_to_level(c.to_i)
+        when "C-L"  # Move item and descendants down (C-J is newline)
+          move_item_down(true)
+        when "i", "ENTER", "\n"  # i or ENTER to edit (C-J sends \n)
+          edit_line
+        when "o"
+          insert_line
+        when "O"
+          @current -= 1 if @current > 0
+          insert_line
+          @current += 1
+        when "a"
+          insert_child
+        when "t"
+          show_templates
+        when "D"  # Delete line (with children)
+          delete_line(false)  # D always deletes with children by default
+        when "C-D"  # Delete line and all descendants explicitly
+          delete_line(true)
+        when "y"  # Yank/copy single line
+          yank_line(false)
+        when "Y"  # Yank/copy line with all descendants
+          yank_line(true)
+        when "p"
+          paste_line
+        when "S-UP"  # Move item up
+          move_item_up(false)
+        when "S-DOWN"  # Move item down
+          move_item_down(false)
+        when "C-UP"  # Move item and descendants up
+          move_item_up(true)
+        when "C-DOWN"  # Move item and descendants down
+          move_item_down(true)
+        when "C-K"  # Alternative: Move item and descendants up (for terminals that intercept C-UP)
+          move_item_up(true)
+        when "TAB"
+          # Indent with all children
+          indent_right(true)
+        when "S-TAB"  # Shift-Tab
+          # Unindent with all children
+          indent_left(true)
+        when "u"
+          undo
+        when "\x12"  # Ctrl-R for redo (0x12 is Ctrl-R ASCII code)
+          redo_change
+        when "v"
+          toggle_checkbox
+        when "V"
+          toggle_checkbox_with_date
+        when "."
+          repeat_last_action
+        when "/"
+          search_forward
+        when "n"
+          search_next
+        when "N"
+          jump_to_next_template_marker
+        when "P"
+          toggle_presentation_mode
+        when "\\"
+          next_c = getchr
+          case next_c
+          when "u"
+            @message = "Underline mode toggled"
+          end
+        when ":"
+          handle_command
+        when "q"
+          # Regular quit
+          if @modified
+            @message = "Unsaved changes! Use :q! or Q to force quit"
+          else
+            quit
+          end
+        when "m"
+          # Mark setting
+          c2 = getchr
+          if c2 && c2 =~ /[a-z]/
+            # Set mark
+            set_mark(c2)
+          end
+        when "M"
+          # Macro recording
+          if @macro_recording
+            # Stop recording
+            stop_macro_recording
+          else
+            c2 = getchr
+            if c2 && c2 =~ /[a-z]/
+              start_macro_recording(c2)
+            end
+          end
+        when "'"
+          # Jump to mark
+          c2 = getchr
+          if c2 == "'"
+            # Jump to previous position
+            jump_to_previous_position
+          elsif c2 && c2 =~ /[a-z]/
+            # Jump to mark
+            jump_to_mark(c2)
+          end
+        when "@"
+          # Play macro
+          next_c = getchr
+          play_macro(next_c) if next_c && next_c =~ /[a-z]/
+        when "w"
+          # Check if it's a window command (ww for window switch)
+          next_c = getchr
+          if next_c == "w" && @split_view
+            # Switch active pane
+            @active_pane = (@active_pane == :main) ? :split : :main
+            @message = "Switched to #{@active_pane} pane"
+          else
+            # Not a window command, ignore for now
+            @message = "Unknown command: w#{next_c}"
+          end
+        when "Q"  # Force quit
+          quit
+        when "ESC", "C-C"  # ESC or Ctrl-C
+          if @search && !@search.empty?
+            # Clear search on first ESC
+            @search = ""
+            @search_matches = []
+            @message = "Search cleared"
+            clear_cache
+          elsif !@modified
+            # Quit on second ESC if not modified
+            quit
+          end
+        end
+      end
+      
+      render
+    end
+  rescue Interrupt
+    quit
+  ensure
+    Cursor.show
+    Rcurses.clear_screen
+  end
+end
+
+# Main
+if __FILE__ == $0
+  # Normal operation - help/version already handled at top of file
+  app = HyperListApp.new(ARGV[0])
+  app.run
+end
