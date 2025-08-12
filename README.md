@@ -14,6 +14,14 @@ Learn more about the HyperList methodology at: [https://isene.org/hyperlist/](ht
 
 For historical context and the original VIM implementation, see: [hyperlist.vim](https://github.com/isene/hyperlist.vim)
 
+## Screenshots
+
+### Main Interface
+![HyperList Main View](screenshot_sample.png)
+
+### Help Screen
+![HyperList Help](screenshot_help.png)
+
 ## Features
 
 ### Core Functionality
