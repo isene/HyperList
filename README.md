@@ -1,6 +1,10 @@
 # HyperList Ruby TUI
 
+<img src="hyperlist_logo.svg" align="left" width="150" height="150">
+
 A powerful Terminal User Interface (TUI) application for creating, editing, and managing HyperLists - a methodology for describing anything in a hierarchical, structured format.
+
+<br clear="left"/>
 
 ## What is HyperList?
 
