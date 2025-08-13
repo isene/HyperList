@@ -3,7 +3,6 @@ HyperList Ruby TUI Test Suite v1.0
 		Purpose: Test all features of the HyperList Ruby TUI application
 		Run with: ./hyperlist test.hl
 		Navigate through and test each feature systematically
-	
 	SYNTAX HIGHLIGHTING & COLORS
 		Check: Property in red; Dates like 2025-08-12 should be red
 		AND: OR: IF: THEN: Operators should appear in blue
@@ -15,9 +14,7 @@ HyperList Ruby TUI Test Suite v1.0
 		*bold text* should appear bold
 		/italic text/ should appear italic
 		_underlined text_ should appear underlined
-		; Comments should be in cyan
 		Templates with = markers for filling
-	
 	NAVIGATION TESTS
 		Basic Movement
 			j/↓ Move down through items
@@ -28,7 +25,7 @@ HyperList Ruby TUI Test Suite v1.0
 			G/End Go to bottom of document
 			PgUp/PgDn Page up and down
 		Search
-			/ Search for text (try searching for "test")
+			Slash key: Search for text (try searching for "test")
 			n Jump to next search match
 		Marks and Jumps
 			ma Set mark 'a' at current position
@@ -36,11 +33,10 @@ HyperList Ruby TUI Test Suite v1.0
 			'' Jump to previous position
 			R Jump to reference (place cursor on <NAVIGATION TESTS> and press R)
 		Template Navigation
-			First template = 
-			Second template = 
-			Third template = 
+			First template =
+			Second template =
+			Third template =
 			Press N to jump to next template marker and edit
-	
 	FOLDING TESTS
 		Space Toggle fold on this item
 			This child should hide/show when parent is folded
@@ -55,7 +51,6 @@ HyperList Ruby TUI Test Suite v1.0
 					Level 4 item
 						Level 5 item
 		0 Multi-digit fold level (press 0 then 1 then 2 for level 12)
-	
 	EDITING TESTS
 		Basic Editing
 			i/Enter Edit current line
@@ -81,7 +76,6 @@ HyperList Ruby TUI Test Suite v1.0
 			S-Tab Unindent item and children
 			→ Indent item only
 			← Unindent item only
-	
 	CHECKBOX TESTS
 		[ ] Press v to add/toggle checkbox
 		[X] Completed checkbox (green)
@@ -91,7 +85,6 @@ HyperList Ruby TUI Test Suite v1.0
 		[3] Numbered checkbox
 		[2025-08-12 14:30] Date checkbox
 		Press V to toggle with timestamp
-	
 	SPECIAL FEATURES
 		Presentation Mode
 			Press P to enter presentation mode
@@ -104,7 +97,6 @@ HyperList Ruby TUI Test Suite v1.0
 		File Operations
 			F Open file reference (place cursor on file path)
 			<sample.hl> Try opening this reference with F
-	
 	FILE COMMANDS
 		:w Save file
 		:q Quit (asks to save if modified)
@@ -121,7 +113,6 @@ HyperList Ruby TUI Test Suite v1.0
 		:as on Enable autosave
 		:as off Disable autosave
 		:as 30 Set autosave interval to 30 seconds
-	
 	ADVANCED TESTS
 		Complex Nesting
 			Parent 1
@@ -135,27 +126,22 @@ HyperList Ruby TUI Test Suite v1.0
 			Parent 2
 				Child 2.1
 				Child 2.2
-		
 		Mixed Formatting
 			Item with *bold* and /italic/ and _underline_
 			Item with #multiple #hash #tags
 			Item with <reference> and (parentheses) and "quotes"
 			AND: Operator with [X] checkbox and 2025-08-12: date
-		
 		Long Lines
 			This is a very long line that should wrap properly in the terminal display and maintain proper indentation when it continues on the next visual line without breaking the hierarchical structure of the HyperList
-		
 		Special Characters
 			Item with special chars: @#$%^&*(){}[]|\\:;"'<>,.?/
 			Unicode: ★ ☆ ♠ ♣ ♥ ♦ → ← ↑ ↓
 			Emojis: 😀 🎉 ✓ ✗ ⚠️ 📝
-	
 	HELP SYSTEM
 		? Show help screen with key bindings
 		?? Show full documentation
 		Use UP/DOWN to scroll through help
 		Press any other key to exit help
-	
 	TEST COMPLETION
 		[ ] All syntax highlighting verified
 		[ ] All navigation features tested
@@ -165,5 +151,4 @@ HyperList Ruby TUI Test Suite v1.0
 		[ ] Special features operational
 		[ ] File commands working
 		[ ] Help system accessible
-		
 		If all tests pass, the Ruby HyperList TUI is working correctly!

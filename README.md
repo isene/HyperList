@@ -254,6 +254,21 @@ Follow the instructions in the test file to verify all features are working corr
 
 Contributions are welcome! Please feel free to submit issues and pull requests.
 
+## Changelog
+
+### v1.1.1 (2025-08-13)
+- **Fixed**: Critical navigation bug where the last item (line 154 in test.hl) was not reachable when pressing 'G'
+- **Fixed**: Improved scrolling behavior to properly handle wrapped lines using rcurses built-in capabilities
+- **Fixed**: Split view navigation - g/G/Home/End/PgUp/PgDown now correctly affect the active pane
+- **Added**: Wrap-around navigation in split view right pane (UP from first goes to last, DOWN from last goes to first)
+- **Added**: Visual end-of-document indicator (blank line at bottom) for better UX
+- **Improved**: Scroll calculations now dynamically account for line wrapping
+
+### v1.1.0 (2025-08-12)
+- Added encryption support for sensitive documents
+- Enhanced presentation mode
+- Various bug fixes and improvements
+
 ## License
 
 This software is released into the **Public Domain**.

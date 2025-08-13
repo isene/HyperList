@@ -59,7 +59,8 @@ end
 # Only load libraries if we're actually running the app
 require 'io/console'
 require 'date'
-require 'rcurses'
+# Use the local fixed version of rcurses instead of the system gem
+require_relative '../rcurses/lib/rcurses'
 require 'cgi'
 require 'openssl'
 require 'digest'
@@ -70,7 +71,7 @@ class HyperListApp
   include Rcurses::Input
   include Rcurses::Cursor
   
-  VERSION = "1.1.0"
+  VERSION = "1.1.1"
   
   def initialize(filename = nil)
     @filename = filename ? File.expand_path(filename) : nil
@@ -105,6 +106,7 @@ class HyperListApp
     @macro_key = nil  # Key for current macro
     @encryption_key = nil  # Store derived encryption key
     @encrypted_lines = {}  # Track which lines are encrypted
+    @st_underline_mode = 0  # 0: none, 1: underline states, 2: underline transitions
     @split_view = false
     @split_items = []  # Second view items
     @split_current = 0  # Second view cursor
@@ -149,22 +151,29 @@ class HyperListApp
     if @split_view
       # Split view layout - no header, more space for content
       split_width = @cols / 2
-      # Main content panes - full height minus 1 for footer
-      @main = Pane.new(0, 0, split_width - 1, @rows - 1, 15, 0)
-      @split_pane = Pane.new(split_width + 1, 0, split_width - 1, @rows - 1, 15, 0)
+      # Main content panes - use nil colors to act as pass-through for pre-colored text
+      # This is how RTFM works - it passes colored command output to panes with nil colors
+      @main = Pane.new(1, 1, split_width - 1, @rows - 1, nil, nil)
+      @split_pane = Pane.new(split_width + 1, 1, split_width - 1, @rows - 1, nil, nil)
       # Footer: Use @rows for y-position (this puts it at the actual bottom)
-      @footer = Pane.new(0, @rows, @cols, 1, 15, 8)
+      @footer = Pane.new(1, @rows, @cols, 1, 15, 8)
       
-      # Add separator
-      @separator = Pane.new(split_width, 0, 1, @rows - 1, 15, 8)
-      @separator.text = "│" * (@rows - 1)
+      # Add separator with explicit background to overwrite emoji overflow
+      @separator = Pane.new(split_width, 1, 1, @rows - 1, 15, 0)
+      # Build separator with explicit clearing
+      separator_lines = []
+      (@rows - 1).times do
+        separator_lines << "│"
+      end
+      @separator.text = separator_lines.join("\n")
       @separator.refresh
     else
       # Single view layout - no header, more space for content
-      # Main pane uses full height minus 1 for footer
-      @main = Pane.new(0, 0, @cols, @rows - 1, 15, 0)
+      # Use nil colors like RTFM to avoid ANSI wrapping issues
+      # This prevents the corruption that happens with narrow terminals
+      @main = Pane.new(1, 1, @cols, @rows - 1, nil, nil)
       # Footer: Use @rows for y-position (this puts it at the actual bottom)
-      @footer = Pane.new(0, @rows, @cols, 1, 15, 8)
+      @footer = Pane.new(1, @rows, @cols, 1, 15, 8)
     end
   end
   
@@ -558,38 +567,28 @@ class HyperListApp
       level = item["level"]
       indent = "    " * level
       
-      # Comments (start with semicolon)
-      if original_text.start_with?(';')
-        # Escape HTML for comments
-        text = original_text.gsub('&', '&amp;')
-                           .gsub('<', '&lt;')
-                           .gsub('>', '&gt;')
-                           .gsub('"', '&quot;')
-                           .gsub("'", '&#39;')
-        html += indent + '<span class="comment">' + text + '</span>' + "\n"
-      else
-        # Process non-comment lines
-        # We'll apply formatting BEFORE escaping HTML entities
-        text = original_text
-        
-        # Apply all formatting with placeholder markers
-        # Use unique markers that won't appear in normal text
-        
-        # Markdown formatting MUST come first before other replacements
-        # Bold *text*
-        text = text.gsub(/\*([^*]+)\*/) do
-          "\u0001BOLDSTART\u0002#{$1}\u0001BOLDEND\u0002"
-        end
-        
-        # Italic /text/
-        text = text.gsub(/\/([^\/]+)\//) do
-          "\u0001ITALICSTART\u0002#{$1}\u0001ITALICEND\u0002"
-        end
-        
-        # Underline _text_
-        text = text.gsub(/_([^_]+)_/) do
-          "\u0001UNDERSTART\u0002#{$1}\u0001UNDEREND\u0002"
-        end
+      # Process the line
+      # We'll apply formatting BEFORE escaping HTML entities
+      text = original_text
+      
+      # Apply all formatting with placeholder markers
+      # Use unique markers that won't appear in normal text
+      
+      # Markdown formatting MUST come first before other replacements
+      # Bold *text*
+      text = text.gsub(/\*([^*]+)\*/) do
+        "\u0001BOLDSTART\u0002#{$1}\u0001BOLDEND\u0002"
+      end
+      
+      # Italic /text/
+      text = text.gsub(/\/([^\/]+)\//) do
+        "\u0001ITALICSTART\u0002#{$1}\u0001ITALICEND\u0002"
+      end
+      
+      # Underline _text_
+      text = text.gsub(/_([^_]+)_/) do
+        "\u0001UNDERSTART\u0002#{$1}\u0001UNDEREND\u0002"
+      end
         
         # Checkboxes at start
         text = text.sub(/^\[X\]/i, "\u0001CBCHECKED\u0002")
@@ -663,7 +662,6 @@ class HyperListApp
                    .gsub("\u0001UNDEREND\u0002", '</u>')
         
         html += indent + text + "\n"
-      end
     end
     
     html += "</body>\n</html>"
@@ -683,133 +681,129 @@ class HyperListApp
     render_main
     render_split_pane if @split_view
     render_footer
+    # Force redraw separator column to fix emoji overflow
+    if @split_view
+      split_col = @cols / 2
+      # Clear and redraw the entire separator column
+      (@rows - 1).times do |row|
+        # Move to position and draw separator with background color to overwrite anything
+        print "\e[#{row + 1};#{split_col}H\e[48;5;0m│\e[49m"
+      end
+    end
   end
   
   
   def render_main
     visible_items = get_visible_items
     
-    # Calculate window
-    view_height = @main.h
-    if @current < @offset
-      @offset = @current
-    elsif @current >= @offset + view_height
-      @offset = @current - view_height + 1
-    end
-    
-    # Track if we're in a literal block
+    # Build ALL lines for the pane (like RTFM/IMDB do)
+    lines = []
     in_literal_block = false
     literal_start_level = -1
     
-    # Build display lines only for visible portion
-    lines = []
-    start_idx = @offset
-    end_idx = [@offset + view_height, visible_items.length].min
-    
-    # For very large files, limit cache size and clear old entries
-    if visible_items.length > 5000 && @processed_cache.size > 2000
-      # Keep only recent entries
-      @processed_cache.clear
-    end
-    
-    # Only process visible items
-    (start_idx...end_idx).each do |idx|
-      item = visible_items[idx]
+    visible_items.each_with_index do |item, idx|
       next unless item
       
-      # Create cache key for this item
-      cache_key = "#{item['text']}_#{item['level']}_#{item['fold']}"
+      line = "    " * item["level"]  # 4 spaces per level
       
-      # Check cache first (skip cache in presentation mode to ensure proper rendering)
-      if @processed_cache[cache_key] && idx != @current && !@presentation_mode
-        lines << @processed_cache[cache_key]
+      # Add fold indicator
+      real_idx = @items.index(item)
+      if real_idx && has_children?(real_idx, @items) && item["fold"]
+        color = (@presentation_mode && !is_item_in_presentation_focus?(item)) ? "240" : "245"
+        line += "▶".fg(color) + " "
+      elsif real_idx && has_children?(real_idx, @items)
+        color = (@presentation_mode && !is_item_in_presentation_focus?(item)) ? "240" : "245"
+        line += "▷".fg(color) + " "
       else
-        line = "    " * item["level"]  # 4 spaces per level
-        
-        # Add fold indicator
-        real_idx = @items.index(item)  # Get the real index in the full array
-        if real_idx && has_children?(real_idx, @items) && item["fold"]
-          # Use darker grey for unfocused items in presentation mode
-          color = (@presentation_mode && !is_item_in_presentation_focus?(item)) ? "240" : "245"
-          line += "▶".fg(color) + " "  # Triangle for collapsed (has hidden children)
-        elsif real_idx && has_children?(real_idx, @items)
-          # Use darker grey for unfocused items in presentation mode
-          color = (@presentation_mode && !is_item_in_presentation_focus?(item)) ? "240" : "245"
-          line += "▷".fg(color) + " "  # Triangle for expanded (has visible children)
+        line += "  "
+      end
+      
+      # Handle literal blocks and syntax highlighting
+      if item["text"].strip == "\\"
+        if !in_literal_block
+          in_literal_block = true
+          literal_start_level = item["level"]
+          spaces = item["text"].match(/^(\s*)/)[1]
+          line += spaces + "\\".fg("3")
+        elsif item["level"] == literal_start_level
+          in_literal_block = false
+          literal_start_level = -1
+          spaces = item["text"].match(/^(\s*)/)[1]
+          line += spaces + "\\".fg("3")
         else
-          line += "  "
-        end
-        
-        # Check for literal block markers
-        if item["text"].strip == "\\"
-          if !in_literal_block
-            # Starting a literal block
-            in_literal_block = true
-            literal_start_level = item["level"]
-            # Preserve leading spaces and color the backslash
-            spaces = item["text"].match(/^(\s*)/)[1]
-            line += spaces + "\\".fg("3")  # Yellow for literal marker
-          elsif item["level"] == literal_start_level
-            # Ending a literal block
-            in_literal_block = false
-            literal_start_level = -1
-            # Preserve leading spaces and color the backslash
-            spaces = item["text"].match(/^(\s*)/)[1]
-            line += spaces + "\\".fg("3")  # Yellow for literal marker
-          else
-            # Backslash inside literal block - no highlighting
-            line += item["text"]
-          end
-        elsif in_literal_block
-          # Inside literal block - no syntax highlighting
           line += item["text"]
+        end
+      elsif in_literal_block
+        line += item["text"]
+      else
+        # Normal syntax highlighting
+        has_match = @search_matches.include?(idx) && @search && !@search.empty?
+        if @presentation_mode && !is_item_in_presentation_focus?(item)
+          line += item["text"].fg("240")
         else
-          # Normal text - apply syntax highlighting with caching
-          # Check if this line has a search match
-          has_match = @search_matches.include?(idx) && @search && !@search.empty?
-          
-          # Check if this is raw text (for help/documentation screens)
-          if item["raw"]
-            line += item["text"]
-          else
-            # Check if we should grey out this item in presentation mode
-            if @presentation_mode && !is_item_in_presentation_focus?(item)
-              # Grey out items not in focus
-              line += item["text"].fg("240")  # Dark grey for unfocused items
-            else
-              processed_text_key = has_match ? "search_#{item['text']}_#{@search}" : "text_#{item['text']}"
-              if @processed_cache[processed_text_key] && !has_match && !@presentation_mode
-                line += @processed_cache[processed_text_key]
-              else
-                processed = process_text(item["text"], has_match)
-                @processed_cache[processed_text_key] = processed if @processed_cache.size < 1000 && !has_match && !@presentation_mode
-                line += processed
-              end
-            end
-          end
+          line += process_text(item["text"], has_match)
         end
-        
-        # Cache the line (without highlight) - but not in presentation mode or for focused items
-        if idx != @current && !@presentation_mode && !item["presentation_focus"]
-          @processed_cache[cache_key] = line
+      end
+      
+      # Apply current item highlighting
+      if idx == @current
+        bg_color = (!@split_view || @active_pane == :main) ? "237" : "234"
+        if bg_color
+          bg_code = "\e[48;5;#{bg_color}m"
+          reset_bg = "\e[49m"
+          line = bg_code + line.gsub(/\e\[49m/, '') + reset_bg
         end
-        
-        # Highlight current line with dark gray background
-        if idx == @current
-          line = line.bg("237")  # Dark gray background to preserve foreground colors
-        end
-        
-        lines << line
+      end
+      
+      lines << line
+      
+      # Check if exiting literal block
+      if in_literal_block && item["level"] <= literal_start_level && !item["text"].strip == "\\"
+        in_literal_block = false
+        literal_start_level = -1
       end
     end
     
-    # Only update if content changed
-    new_content = lines.join("\n")
-    if @last_rendered_content != new_content
-      @main.text = new_content
-      @main.refresh
-      @last_rendered_content = new_content
+    # Add a blank line at the bottom to show end of document
+    lines << ""
+    
+    # Set the full content to the pane and let rcurses handle scrolling
+    @main.text = lines.join("\n")
+    
+    # Calculate how many extra lines are created by wrapping
+    logical_lines = lines.length
+    # Estimate wrapped lines by checking line lengths against pane width
+    extra_wrapped_lines = 0
+    lines[0..-2].each do |line|  # Exclude the blank line we added
+      # Remove ANSI codes for length calculation
+      clean_line = line.gsub(/\e\[[0-9;]*m/, '')
+      if clean_line.length > @main.w
+        # This line will wrap - calculate how many extra lines it creates
+        extra_lines = (clean_line.length.to_f / @main.w).ceil - 1
+        extra_wrapped_lines += extra_lines
+      end
     end
+    
+    # Calculate scroll position exactly like RTFM does, but account for wrapping
+    # Treat the content as having one extra line (the blank line at bottom)
+    scrolloff = 3
+    total = visible_items.length + 1  # +1 for the blank line
+    page = @main.h
+    
+    if total <= page
+      # If everything fits, always start from the very top
+      @main.ix = 0
+    elsif @current - @main.ix < scrolloff
+      # If we're too close to the top of the pane, scroll up
+      @main.ix = [@current - scrolloff, 0].max
+    elsif (@main.ix + page - 1 - @current) < scrolloff
+      # If we're too close to the bottom of the pane, scroll down
+      # Account for wrapped lines dynamically
+      max_off = [total - page + extra_wrapped_lines, 0].max
+      @main.ix = [@current + scrolloff - page + 1, max_off].min
+    end
+    
+    @main.refresh
   end
   
   def process_text(text, highlight_search = false)
@@ -820,6 +814,47 @@ class HyperListApp
     # If text already contains ANSI codes, return as-is to avoid double-processing
     if result.include?("\e[")
       return result
+    end
+    
+    # Apply State and Transition underlining FIRST, before any coloring
+    if @st_underline_mode == 1
+      # Underline states
+      if result =~ /^(\s*)(S:\s+)(.*)$/ || result =~ /^(\s*)(\|\s+)(.*)$/
+        prefix = $1 || ""
+        marker = $2
+        content = $3 || ""
+        # Apply underline to content after the marker
+        result = prefix + marker + content.u
+      end
+    elsif @st_underline_mode == 2
+      # Underline transitions
+      if result =~ /^(\s*)(T:\s+)(.*)$/ || result =~ /^(\s*)(\/\s+)(.*)$/
+        prefix = $1 || ""
+        marker = $2
+        content = $3 || ""
+        # Apply underline to content after the marker
+        result = prefix + marker + content.u
+      end
+    end
+    
+    # Helper method to safely apply regexes without corrupting ANSI sequences
+    def safe_regex_replace(text, pattern, &block)
+      # Find all ANSI sequences and replace with placeholders
+      ansi_sequences = []
+      placeholder_text = text.gsub(/\e\[[0-9;]*m/) do |match|
+        ansi_sequences << match
+        "⟨ANSI#{ansi_sequences.length - 1}⟩"
+      end
+      
+      # Apply the regex to the placeholder text
+      result_text = placeholder_text.gsub(pattern, &block)
+      
+      # Restore ANSI sequences
+      ansi_sequences.each_with_index do |ansi, index|
+        result_text.gsub!("⟨ANSI#{index}⟩", ansi)
+      end
+      
+      result_text
     end
     
     # Check if this is an encrypted line
@@ -906,7 +941,7 @@ class HyperListApp
       
       # Check if it's an operator (ALL-CAPS with optional _, -, (), /, =, spaces)
       if text_part =~ /^[A-Z][A-Z_\-() \/=]*$/
-        prefix_space + text_part.fg("4") + colon_space.fg("4")  # Blue for operators
+        prefix_space + text_part.fg("4") + colon_space.fg("4")  # Blue for operators (including S: and T:)
       elsif text_part.length >= 2 && space_after.include?(" ")
         # It's a property (mixed case, at least 2 chars, has space after colon)
         prefix_space + text_part.fg("1") + colon_space.fg("1")  # Red for properties
@@ -916,16 +951,24 @@ class HyperListApp
       end
     end
     
+    
+    # Color special state/transition markers (| and /) green
+    result.gsub!(/^(\s*)\|\s+/) { $1 + "| ".fg("2") }  # Green for pipe (state marker)
+    result.gsub!(/^(\s*)\/\s+/) { $1 + "/ ".fg("2") }  # Green for slash (transition marker)
+    
     # Handle OR: at the beginning of a line (with optional spaces)
     result.sub!(/^(\s*)(OR):/) { $1 + "OR:".fg("4") }  # Blue for OR: at line start
     
     # Handle parentheses content (moved here to avoid conflicts with properties)
     # Based on hyperlist.vim: '(.\{-})'
-    result.gsub!(/\(([^)]*)\)/) { "(".fg("6") + $1.fg("6") + ")".fg("6") }  # Cyan for parentheses and content
+    result = safe_regex_replace(result, /\(([^)]*)\)/) do |match|
+      content = match[1..-2]  # Extract content between parentheses
+      "(".fg("6") + content.fg("6") + ")".fg("6")
+    end
     
-    # Handle semicolons as separators - but only at the start of the line or after spaces
-    # Don't replace semicolons that might be part of ANSI codes
-    result.gsub!(/^(\s*);/) { $1 + ";".fg("2") }  # Green for comment semicolons
+    # Handle semicolons as separators (they separate items on the same line)
+    # Semicolons are green like qualifiers
+    result = safe_regex_replace(result, /;/) { ";".fg("2") }
     
     # Handle references - color entire reference including brackets
     # Based on hyperlist.vim: '<\{1,2}[...]\+>\{1,2}'
@@ -934,19 +977,13 @@ class HyperListApp
     # Handle special keywords SKIP and END
     result.gsub!(/\b(SKIP|END)\b/) { $1.fg("5") }  # Magenta for special keywords (like references)
     
-    # Handle quoted strings FIRST, but color ## sequences inside them red
+    # Handle quoted strings (only double quotes are special in HyperList)
     # Based on hyperlist.vim: '".\{-}"'
     result.gsub!(/"([^"]*)"/) do
       content = $1
       # Color any ## sequences inside the quotes as red
       content.gsub!(/(##[<>-]+)/) { $1.fg("1") }
-      '"'.fg("6") + content + '"'.fg("6")  # Cyan for quotes
-    end
-    result.gsub!(/'([^']*)'/) do
-      content = $1
-      # Color any ## sequences inside the quotes as red
-      content.gsub!(/(##[<>-]+)/) { $1.fg("1") }
-      "'".fg("6") + content + "'".fg("6")  # Cyan for single quotes
+      '"'.fg("6") + content.fg("6") + '"'.fg("6")  # Cyan for quoted strings
     end
     
     # Handle change markup - all double-hashes should be red
@@ -1108,40 +1145,135 @@ class HyperListApp
     false
   end
   
+  def indent_split_right(with_children = false)
+    visible_items = get_visible_split_items
+    return if @split_current >= visible_items.length
+    
+    item = visible_items[@split_current]
+    real_idx = @split_items.index(item)
+    
+    # Can only indent if there's a previous item at same or higher level
+    if real_idx && real_idx > 0
+      save_undo_state  # Save state before modification
+      original_level = item["level"]
+      item["level"] += 1  # Since item is a reference, this updates the object in both arrays
+      
+      # Indent children if requested
+      if with_children
+        ((real_idx + 1)...@split_items.length).each do |i|
+          if @split_items[i]["level"] > original_level
+            @split_items[i]["level"] += 1
+          else
+            break
+          end
+        end
+      end
+      
+      @modified = true
+      @message = "Indented in split pane"
+    end
+  end
+  
+  def indent_split_left(with_children = false)
+    visible_items = get_visible_split_items
+    return if @split_current >= visible_items.length
+    
+    item = visible_items[@split_current]
+    real_idx = @split_items.index(item)
+    
+    if real_idx && item["level"] > 0
+      save_undo_state  # Save state before modification
+      original_level = item["level"]
+      item["level"] -= 1  # Since item is a reference, this updates the object in both arrays
+      
+      # Unindent children if requested
+      if with_children
+        ((real_idx + 1)...@split_items.length).each do |i|
+          if @split_items[i]["level"] > original_level
+            @split_items[i]["level"] -= 1
+          else
+            break
+          end
+        end
+      end
+      
+      @modified = true
+      @message = "Unindented in split pane"
+    end
+  end
+  
   def toggle_fold
-    visible = get_visible_items
-    return if @current >= visible.length
-    
-    item = visible[@current]
-    real_idx = @items.index(item)
-    
-    if real_idx && has_children?(real_idx, @items)
-      @items[real_idx]["fold"] = !@items[real_idx]["fold"]
-      record_last_action(:toggle_fold, nil)
+    if @split_view && @active_pane == :split
+      # Handle fold toggle in split pane
+      visible_items = get_visible_split_items
+      return if @split_current >= visible_items.length
+      
+      item = visible_items[@split_current]
+      real_idx = @split_items.index(item)
+      
+      if real_idx && has_children_in_array?(real_idx, @split_items)
+        item["fold"] = !item["fold"]  # Since item is a reference, this updates the object in both arrays
+      end
+    else
+      # Handle fold toggle in main pane
+      visible = get_visible_items
+      return if @current >= visible.length
+      
+      item = visible[@current]
+      real_idx = @items.index(item)
+      
+      if real_idx && has_children?(real_idx, @items)
+        @items[real_idx]["fold"] = !@items[real_idx]["fold"]
+        record_last_action(:toggle_fold, nil)
+      end
     end
   end
   
   def move_up
-    @current = [@current - 1, 0].max
+    max_items = get_visible_items.length - 1
+    
+    if @current == 0
+      # Wrap around to last item
+      @current = max_items
+    else
+      @current = [@current - 1, 0].max
+    end
+    
     update_presentation_focus if @presentation_mode
   end
   
   def move_down
     max = get_visible_items.length - 1
-    @current = [@current + 1, max].min
+    
+    if @current == max
+      # Wrap around to first item
+      @current = 0
+    else
+      @current = [@current + 1, max].min
+    end
+    
     update_presentation_focus if @presentation_mode
   end
   
   def page_up
-    @current = [@current - (@main.h - 1), 0].max
-    @offset = [@offset - (@main.h - 1), 0].max
-    update_presentation_focus if @presentation_mode
+    if @split_view && @active_pane == :split
+      @split_current = [@split_current - (@split_pane.h - 1), 0].max
+    else
+      @current = [@current - (@main.h - 1), 0].max
+      @offset = [@offset - (@main.h - 1), 0].max
+      update_presentation_focus if @presentation_mode
+    end
   end
   
   def page_down
-    max = get_visible_items.length - 1
-    @current = [@current + (@main.h - 1), max].min
-    update_presentation_focus if @presentation_mode
+    if @split_view && @active_pane == :split
+      max = get_visible_split_items.length - 1
+      @split_current = [@split_current + (@split_pane.h - 1), max].min
+    else
+      max = get_visible_items.length - 1
+      @current = [@current + (@main.h - 1), max].min
+      update_presentation_focus if @presentation_mode
+    end
   end
   
   def go_to_parent
@@ -2016,9 +2148,9 @@ class HyperListApp
     help_lines << help_line("#{"i/Enter".fg("10")}", "Edit line", "#{"o".fg("10")}", "Insert line below")
     help_lines << help_line("#{"O".fg("10")}", "Insert line above", "#{"a".fg("10")}", "Insert child")
     help_lines << help_line("#{"D".fg("10")}", "Delete+yank line", "#{"C-D".fg("10")}", "Delete+yank item&descendants")
-    help_lines << help_line("#{"y".fg("10")}/#{"Y".fg("10")}", "Copy line/tree", "#{"p".fg("10")}", "Paste")
+    help_lines << help_line("#{"y".fg("10")}" + "/".fg("10") + "#{"Y".fg("10")}", "Copy line/tree", "#{"p".fg("10")}", "Paste")
     help_lines << help_line("#{"u".fg("10")}", "Undo", "#{".".fg("10")}", "Repeat last action")
-    help_lines << help_line("#{"r".fg("10")}, #{"C-R".fg("10")}", "Redo")
+    help_lines << help_line("#{"r".fg("10")}" + ", ".fg("10") + "#{"C-R".fg("10")}", "Redo")
     help_lines << help_line("#{"S-UP".fg("10")}", "Move item up", "#{"S-DOWN".fg("10")}", "Move item down")
     help_lines << help_line("#{"C-UP".fg("10")}", "Move item&descendants up", "#{"C-DOWN".fg("10")}", "Move item&descendants down")
     help_lines << help_line("#{"Tab".fg("10")}", "Indent item+kids", "#{"S-Tab".fg("10")}", "Unindent item+kids")
@@ -2026,13 +2158,12 @@ class HyperListApp
     help_lines << ""
     help_lines << "#{"FEATURES".fg("14")}"
     help_lines << help_line("#{"v".fg("10")}", "Toggle checkbox", "#{"V".fg("10")}", "Checkbox with date")
-    help_lines << help_line("#{"C-E".fg("10")}", "Encrypt/decrypt line", "#{"R".fg("10")}", "Go to reference")
-    help_lines << help_line("#{"F".fg("10")}", "Open file", "#{"N".fg("10")}", "Next = marker")
-    help_lines << help_line("#{"P".fg("10")}", "Presentation mode")
+    help_lines << help_line("#{"C-E".fg("10")}", "Encrypt/decrypt line", "#{"C-U".fg("10")}", "Toggle State/Trans underline")
+    help_lines << help_line("#{"R".fg("10")}", "Go to reference", "#{"F".fg("10")}", "Open file")
+    help_lines << help_line("#{"N".fg("10")}", "Next = marker", "#{"P".fg("10")}", "Presentation mode")
     help_lines << help_line("#{"t".fg("10")}", "Insert template", "#{":template".fg("10")}", "Show templates")
     help_lines << help_line("#{"Ma".fg("10")}", "Record macro 'a'", "#{"@a".fg("10")}", "Play macro 'a'")
-    help_lines << help_line("#{":vsplit".fg("10")}", "Split view vertically", "#{"ww".fg("10")}", "Switch panes")
-    help_lines << help_line("#{"\\u".fg("10")}", "Toggle underline")
+    help_lines << help_line("#{":vsplit".fg("10")}", "Split view vertically", "#{"w".fg("10")}", "Switch panes")
     help_lines << ""
     help_lines << "#{"FILE OPERATIONS".fg("14")}"
     help_lines << help_line("#{":w".fg("10")}", "Save", "#{":q".fg("10")}", "Quit")
@@ -2048,8 +2179,8 @@ class HyperListApp
     help_lines << help_line("#{"[ ]".fg("22")}", "Unchecked", "#{"[-]".fg("2")}", "Partial")
     help_lines << help_line("#{"[?]".fg("2")}", "Conditionals", "#{"AND:".fg("4")}", "Operators")
     help_lines << help_line("#{"Date:".fg("1")}", "Properties", "#{"<ref>".fg("5")}", "References")
-    help_lines << help_line("#{"(info)".fg("6")}", "Parentheses", "#{'"text"'.fg("14")}", "Quoted strings")
-    help_lines << help_line("#{"; comment".fg("6")}", "Comments", "#{"#tag".fg("184")}", "Hash tags")
+    help_lines << help_line("#{"(comment)".fg("6")}", "Comments", "#{'"text"'.fg("14")}", "Quoted strings")
+    help_lines << help_line("#{";".fg("2")}", "Separator", "#{"#tag".fg("184")}", "Hash tags")
     
     help = help_lines.join("\n")
     
@@ -2093,7 +2224,8 @@ class HyperListApp
         @current = 0
         @offset = 0
       when "END"
-        @current = @items.length - 1
+        visible = get_visible_items
+        @current = [visible.length - 1, 0].max
       else
         # Any other key returns to main view
         break
@@ -2274,13 +2406,14 @@ class HyperListApp
     
     #{"ADDITIVES".b}
     
-    #{"Comments".fg("6")} (in parentheses or after semicolon):
+    #{"Comments".fg("6")} (in parentheses):
     (This is a comment)        Not executed in transitions
-    ; Line comment             Everything after ; is a comment
+    
+    #{"Separators".fg("2")} (semicolon):
+    Item 1; Item 2; Item 3     Multiple items on same line
     
     #{"Quotes".fg("14")} (in quotation marks):
     "Literal text"             Not interpreted as HyperList
-    'Also literal'             Single quotes work too
     
     #{"Tags".fg("184")} (hashtags):
     #TODO #important           Markers for categorization
@@ -2618,14 +2751,16 @@ class HyperListApp
         @current = 0
         @offset = 0
       when "END"
-        @current = @items.length - 1
+        visible = get_visible_items
+        @current = [visible.length - 1, 0].max
       when "g"
         if getchr == "g"
           @current = 0
           @offset = 0
         end
       when "G"
-        @current = @items.length - 1
+        visible = get_visible_items
+        @current = [visible.length - 1, 0].max
       end
     end
     
@@ -2710,7 +2845,7 @@ class HyperListApp
     when "autosave", "as"
       status = @auto_save_enabled ? "enabled" : "disabled"
       @message = "Auto-save is #{status} (interval: #{@auto_save_interval}s)"
-    when "template", "templates", "t"
+    when "t"
       show_templates
     when "foldlevel"
       level = @footer.ask("Fold to level (0-9): ", "")
@@ -2883,22 +3018,53 @@ class HyperListApp
     
     password = ""
     loop do
-      c = getchr
-      case c
-      when "ENTER"
-        break
-      when "BACKSPACE", "C-h"
-        password.chop! unless password.empty?
-      when "ESC", "C-c"
-        return nil
-      else
-        if c.length == 1 && c.ord >= 32 && c.ord <= 126
-          password += c
+      begin
+        c = getchr
+        
+        # Debug logging
+        if ENV['DEBUG']
+          File.open('/tmp/hyperlist_debug.log', 'a') do |f|
+            f.puts "Password prompt key: #{c.inspect}"
+          end
         end
+        
+        case c
+        when "ENTER", "\r", "\n"
+          break
+        when "BACKSPACE", "BACK", "C-h", "\x7F", "\b"
+          password.chop! unless password.empty?
+        when "ESC", "C-c"
+          return nil
+        when nil
+          # Skip nil input
+          next
+        else
+          if c && c.length == 1 && c.ord >= 32 && c.ord <= 126
+            password += c
+          end
+        end
+        @footer.text = prompt + "*" * password.length
+        @footer.refresh
+      rescue => e
+        # If there's an error, return nil
+        @message = "Password input error: #{e.message}"
+        return nil
       end
-      @footer.text = prompt + "*" * password.length
-      @footer.refresh
     end
+    
+    # Clear the password prompt
+    @footer.text = ""
+    @footer.refresh
+    
+    # Flush any remaining input to avoid accidental quit
+    begin
+      while IO.select([$stdin], nil, nil, 0)
+        $stdin.read_nonblock(1024)
+      end
+    rescue IO::WaitReadable, EOFError
+      # No more input to flush
+    end
+    
     password
   end
 
@@ -2994,40 +3160,44 @@ class HyperListApp
   def toggle_line_encryption
     return if @items.empty?
     
-    item = @items[@current]
-    current_text = item["text"]
-    
-    if current_text.start_with?("ENC:")
-      # Decrypt the line
-      decrypted = decrypt_string(current_text)
-      if decrypted
-        save_state
-        item["text"] = decrypted
-        @encrypted_lines.delete(@current)
-        @modified = true
-        @message = "Line decrypted"
+    begin
+      item = @items[@current]
+      current_text = item["text"]
+      
+      if current_text.start_with?("ENC:")
+        # Decrypt the line
+        decrypted = decrypt_string(current_text)
+        if decrypted
+          save_undo_state
+          item["text"] = decrypted
+          @encrypted_lines.delete(@current)
+          @modified = true
+          @message = "Line decrypted"
+        else
+          @message = "Decryption failed or cancelled"
+        end
       else
-        @message = "Decryption failed"
+        # Encrypt the line
+        encrypted = encrypt_string(current_text)
+        if encrypted
+          save_undo_state
+          item["text"] = encrypted
+          @encrypted_lines[@current] = true
+          @modified = true
+          @message = "Line encrypted"
+        else
+          @message = "Encryption cancelled"
+        end
       end
-    else
-      # Encrypt the line
-      encrypted = encrypt_string(current_text)
-      if encrypted
-        save_state
-        item["text"] = encrypted
-        @encrypted_lines[@current] = true
-        @modified = true
-        @message = "Line encrypted"
-      else
-        @message = "Encryption cancelled"
-      end
+    rescue => e
+      @message = "Encryption error: #{e.message}"
     end
   end
   
   def load_templates
     {
       "project" => [
-        {"text" => "Project: [Project Name]", "level" => 0},
+        {"text" => "Project: =Project Name=", "level" => 0},
         {"text" => "[_] Define project scope", "level" => 1},
         {"text" => "[_] Identify stakeholders", "level" => 1},
         {"text" => "[_] Create timeline", "level" => 1},
@@ -3046,25 +3216,25 @@ class HyperListApp
         {"text" => "[_] Archive project materials", "level" => 2}
       ],
       "meeting" => [
-        {"text" => "Meeting: [Title]", "level" => 0},
+        {"text" => "Meeting: =Title=", "level" => 0},
         {"text" => "Date: #{Time.now.strftime('%Y-%m-%d %H:%M')}", "level" => 1},
-        {"text" => "Location: [Conference Room/Online]", "level" => 1},
+        {"text" => "Location: =Conference Room/Online=", "level" => 1},
         {"text" => "Attendees", "level" => 1},
-        {"text" => "[Name 1]", "level" => 2},
-        {"text" => "[Name 2]", "level" => 2},
+        {"text" => "=Name 1=", "level" => 2},
+        {"text" => "=Name 2=", "level" => 2},
         {"text" => "Agenda", "level" => 1},
         {"text" => "[_] Opening remarks", "level" => 2},
         {"text" => "[_] Review previous action items", "level" => 2},
         {"text" => "[_] Main topics", "level" => 2},
-        {"text" => "Topic 1: [Description]", "level" => 3},
-        {"text" => "Topic 2: [Description]", "level" => 3},
+        {"text" => "Topic 1: =Description=", "level" => 3},
+        {"text" => "Topic 2: =Description=", "level" => 3},
         {"text" => "[_] Q&A session", "level" => 2},
         {"text" => "[_] Next steps", "level" => 2},
         {"text" => "Action Items", "level" => 1},
-        {"text" => "[_] [Action 1] - Assigned to: [Name] - Due: [Date]", "level" => 2},
-        {"text" => "[_] [Action 2] - Assigned to: [Name] - Due: [Date]", "level" => 2},
+        {"text" => "[_] =Action 1= - Assigned to: =Name= - Due: =Date=", "level" => 2},
+        {"text" => "[_] =Action 2= - Assigned to: =Name= - Due: =Date=", "level" => 2},
         {"text" => "Notes", "level" => 1},
-        {"text" => "[Add meeting notes here]", "level" => 2}
+        {"text" => "=Add meeting notes here=", "level" => 2}
       ],
       "daily" => [
         {"text" => "Daily Plan: #{Time.now.strftime('%Y-%m-%d')}", "level" => 0},
@@ -3073,19 +3243,19 @@ class HyperListApp
         {"text" => "[_] Check emails", "level" => 2},
         {"text" => "[_] Plan priorities", "level" => 2},
         {"text" => "Priority Tasks", "level" => 1},
-        {"text" => "[_] [High Priority Task 1]", "level" => 2},
-        {"text" => "[_] [High Priority Task 2]", "level" => 2},
-        {"text" => "[_] [High Priority Task 3]", "level" => 2},
+        {"text" => "[_] =High Priority Task 1=", "level" => 2},
+        {"text" => "[_] =High Priority Task 2=", "level" => 2},
+        {"text" => "[_] =High Priority Task 3=", "level" => 2},
         {"text" => "Regular Tasks", "level" => 1},
-        {"text" => "[_] [Task 1]", "level" => 2},
-        {"text" => "[_] [Task 2]", "level" => 2},
+        {"text" => "[_] =Task 1=", "level" => 2},
+        {"text" => "[_] =Task 2=", "level" => 2},
         {"text" => "Meetings/Appointments", "level" => 1},
-        {"text" => "[Time] - [Meeting/Event]", "level" => 2},
+        {"text" => "=Time= - =Meeting/Event=", "level" => 2},
         {"text" => "Notes", "level" => 1},
-        {"text" => "[Daily observations and reflections]", "level" => 2}
+        {"text" => "=Daily observations and reflections=", "level" => 2}
       ],
       "checklist" => [
-        {"text" => "Checklist: [Title]", "level" => 0},
+        {"text" => "Checklist: =Title=", "level" => 0},
         {"text" => "[_] Item 1", "level" => 1},
         {"text" => "[_] Item 2", "level" => 1},
         {"text" => "[_] Item 3", "level" => 1},
@@ -3093,9 +3263,9 @@ class HyperListApp
         {"text" => "[_] Item 5", "level" => 1}
       ],
       "brainstorm" => [
-        {"text" => "Brainstorming: [Topic]", "level" => 0},
+        {"text" => "Brainstorming: =Topic=", "level" => 0},
         {"text" => "Problem Statement", "level" => 1},
-        {"text" => "[Define the problem or opportunity]", "level" => 2},
+        {"text" => "=Define the problem or opportunity=", "level" => 2},
         {"text" => "Ideas", "level" => 1},
         {"text" => "Category 1", "level" => 2},
         {"text" => "Idea A", "level" => 3},
@@ -3112,37 +3282,35 @@ class HyperListApp
         {"text" => "[_] Create action plan", "level" => 2}
       ],
       "recipe" => [
-        {"text" => "Recipe: [Name]", "level" => 0},
-        {"text" => "Servings: [Number]", "level" => 1},
-        {"text" => "Prep Time: [Time]", "level" => 1},
-        {"text" => "Cook Time: [Time]", "level" => 1},
+        {"text" => "Recipe: =Name=", "level" => 0},
+        {"text" => "Servings: =Number=", "level" => 1},
+        {"text" => "Prep Time: =Time=", "level" => 1},
+        {"text" => "Cook Time: =Time=", "level" => 1},
         {"text" => "Ingredients", "level" => 1},
-        {"text" => "[Amount] [Ingredient 1]", "level" => 2},
-        {"text" => "[Amount] [Ingredient 2]", "level" => 2},
-        {"text" => "[Amount] [Ingredient 3]", "level" => 2},
+        {"text" => "=Amount= =Ingredient 1=", "level" => 2},
+        {"text" => "=Amount= =Ingredient 2=", "level" => 2},
+        {"text" => "=Amount= =Ingredient 3=", "level" => 2},
         {"text" => "Instructions", "level" => 1},
-        {"text" => "[_] Step 1: [Description]", "level" => 2},
-        {"text" => "[_] Step 2: [Description]", "level" => 2},
-        {"text" => "[_] Step 3: [Description]", "level" => 2},
+        {"text" => "[_] Step 1: =Description=", "level" => 2},
+        {"text" => "[_] Step 2: =Description=", "level" => 2},
+        {"text" => "[_] Step 3: =Description=", "level" => 2},
         {"text" => "Notes", "level" => 1},
-        {"text" => "[Tips, variations, serving suggestions]", "level" => 2}
+        {"text" => "=Tips, variations, serving suggestions=", "level" => 2}
       ]
     }
   end
   
   def show_templates
-    # Save current state
-    saved_items = @items.dup
-    saved_current = @current
-    saved_offset = @offset
-    saved_filename = @filename
-    saved_modified = @modified
+    # Store original state in an array to ensure proper restoration
+    original_state = {
+      items: @items.dup,
+      current: @current,
+      offset: @offset, 
+      filename: @filename,
+      modified: @modified
+    }
     
-    # Create items for template selection
-    @items = []
-    @items << {"text" => "TEMPLATES (press Enter to insert, q to cancel)", "level" => 0, "fold" => false, "raw" => true}
-    @items << {"text" => "="*50, "level" => 0, "fold" => false, "raw" => true}
-    
+    # Create template selection view
     template_list = [
       ["project", "Project Plan - Complete project management template"],
       ["meeting", "Meeting Agenda - Structure for meeting notes"],
@@ -3152,61 +3320,102 @@ class HyperListApp
       ["recipe", "Recipe - Cooking recipe structure"]
     ]
     
+    # Build template selection items
+    @items = []
+    @items << {"text" => "TEMPLATES (press Enter to insert, q to cancel)", "level" => 0, "fold" => false, "raw" => true}
+    @items << {"text" => "="*50, "level" => 0, "fold" => false, "raw" => true}
+    
     template_list.each_with_index do |(key, desc), idx|
-      @items << {"text" => "#{idx+1}. #{key.capitalize}: #{desc}", "level" => 0, "fold" => false, "raw" => true, "template_key" => key}
+      @items << {
+        "text" => "#{idx+1}. #{key.capitalize}: #{desc}", 
+        "level" => 0, 
+        "fold" => false, 
+        "raw" => true, 
+        "template_key" => key
+      }
     end
     
     @current = 2  # Start at first template
     @offset = 0
-    @modified = false
     
     selected_template = nil
+    exit_loop = false
     
-    # Template viewer loop
-    loop do
-      render_main
-      @footer.text = "Templates | Enter: insert | q: cancel | j/k: navigate"
-      @footer.refresh
-      
-      c = getchr
-      case c
-      when "q", "ESC"
-        # Restore original state
-        @items = saved_items
-        @current = saved_current
-        @offset = saved_offset
-        @filename = saved_filename
-        @modified = saved_modified
-        break
-      when "j", "DOWN"
-        move_down if @current < @items.length - 1
-      when "k", "UP"
-        move_up if @current > 2  # Don't go above first template
-      when "ENTER", "l"
-        if @current >= 2 && @items[@current]["template_key"]
-          selected_template = @items[@current]["template_key"]
-          break
+    # Template selection loop
+    while !exit_loop
+      begin
+        render_main
+        @footer.text = "Templates | Enter: insert | q: cancel | j/k: navigate"
+        @footer.refresh
+        
+        c = getchr
+        
+        # Skip truly nil input
+        next if c.nil?
+        
+        # Debug logging to file
+        File.open('/tmp/hyperlist_debug.log', 'a') do |f|
+          f.puts "Template key received: #{c.inspect} (length: #{c.length}, ord: #{c.bytes.inspect})"
+        end if ENV['DEBUG']
+        
+        case c
+        when "q", "ESC", "C-c", "Q"
+          exit_loop = true
+        when "j", "DOWN"
+          @current = [@current + 1, @items.length - 1].min
+        when "k", "UP"
+          @current = [@current - 1, 2].max
+        when "ENTER", "RETURN", "\n", "\r", "l"
+          if @current >= 2 && @current < @items.length
+            item = @items[@current]
+            if item && item.is_a?(Hash) && item["template_key"]
+              selected_template = item["template_key"]
+              exit_loop = true
+            end
+          end
+        when /^[1-6]$/
+          idx = c.to_i - 1
+          if idx >= 0 && idx < template_list.length
+            selected_template = template_list[idx][0]
+            exit_loop = true
+          end
         end
-      when /^[1-6]$/
-        # Allow number key selection
-        idx = c.to_i - 1
-        if idx < template_list.length
-          selected_template = template_list[idx][0]
-          break
-        end
+        
+      rescue => e
+        # Log error but continue
+        @message = "Error in template loop: #{e.message}"
+        exit_loop = true
       end
     end
     
-    # Insert selected template
-    if selected_template
-      # Restore original state first
-      @items = saved_items
-      @current = saved_current
-      @offset = saved_offset
-      @filename = saved_filename
-      @modified = saved_modified
-      
-      insert_template(selected_template)
+    # Restore original state
+    @items = original_state[:items]
+    @current = original_state[:current]
+    @offset = original_state[:offset]
+    @filename = original_state[:filename]
+    @modified = original_state[:modified]
+    
+    # Flush any remaining input to avoid accidental actions
+    begin
+      while IO.select([$stdin], nil, nil, 0)
+        $stdin.read_nonblock(1024)
+      end
+    rescue IO::WaitReadable, EOFError
+      # No more input to flush
+    end
+    
+    # Insert template if one was selected
+    if selected_template && !selected_template.empty?
+      begin
+        template_items = @templates[selected_template]
+        if template_items && template_items.is_a?(Array) && !template_items.empty?
+          insert_template(selected_template)
+        else
+          @message = "Template '#{selected_template}' not found or empty"
+        end
+      rescue => e
+        @message = "Error inserting template: #{e.message}"
+      end
     end
   end
   
@@ -3214,10 +3423,15 @@ class HyperListApp
     template_items = @templates[template_key]
     return unless template_items
     
-    save_state_for_undo
+    # Ensure we have valid items and current position
+    return if @items.nil? || @items.empty?
+    return if @current.nil? || @current < 0 || @current >= @items.length
+    return unless @items[@current]
+    
+    save_undo_state
     
     # Get current item level to adjust template indentation
-    current_level = @items[@current]["level"]
+    current_level = @items[@current]["level"] || 0
     
     # Insert template items after current position
     insertion_point = @current + 1
@@ -3317,13 +3531,29 @@ class HyperListApp
     when "V"
       toggle_checkbox_with_date
     when "TAB"
-      indent_with_children
+      if @split_view && @active_pane == :split
+        indent_split_right(true)  # with children
+      else
+        indent_right(true)  # with children
+      end
     when "S-TAB"
-      unindent_with_children
+      if @split_view && @active_pane == :split
+        indent_split_left(true)  # with children
+      else
+        indent_left(true)  # with children
+      end
     when "RIGHT"
-      indent_line
+      if @split_view && @active_pane == :split
+        indent_split_right(false)
+      else
+        indent_right(false)
+      end
     when "LEFT"
-      unindent_line
+      if @split_view && @active_pane == :split
+        indent_split_left(false)
+      else
+        indent_left(false)
+      end
     when " "
       toggle_fold
     when "u"
@@ -3340,17 +3570,29 @@ class HyperListApp
   def toggle_split_view
     @split_view = !@split_view
     if @split_view
-      @split_items = @items.dup  # Copy current items to split view
+      # Use the actual items array for full document split view
+      # This ensures changes in either pane affect both views
+      @split_items = @items
       @split_current = @current
       @split_offset = @offset
       @active_pane = :main
-      set_message("Split view enabled. Use 'ww' to switch panes.")
+      set_message("Split view enabled. Use Ctrl-w w to switch panes.")
     else
       @split_items = []
       set_message("Split view disabled")
     end
+    
+    # Clear cached content to force re-render
+    @last_rendered_content = ""
+    @processed_cache.clear
+    
+    # Recreate UI
     setup_ui
-    render  # Re-render everything after changing the UI layout
+    
+    # Force complete re-render
+    render_main
+    render_split_pane if @split_view
+    render_footer
   end
   
   def copy_section_to_split
@@ -3382,7 +3624,8 @@ class HyperListApp
       end_idx = idx
     end
     
-    # Copy section to split view
+    # Copy section to split view - use references, not copies
+    # The slice creates a new array but contains references to the same item objects
     @split_items = @items[start_idx..end_idx]
     @split_current = 0
     @split_offset = 0
@@ -3398,6 +3641,10 @@ class HyperListApp
       if @split_view
         @active_pane = (@active_pane == :main) ? :split : :main
         @message = "Switched to #{@active_pane} pane"
+        # Force re-render both panes to update highlighting
+        render_main
+        render_split_pane
+        render_footer
       end
     when "v"
       # Vertical split
@@ -3413,48 +3660,111 @@ class HyperListApp
     end
   end
   
+  def get_visible_split_items
+    return [] unless @split_items
+    
+    visible = []
+    skip_until_level = nil
+    
+    @split_items.each do |item|
+      # Skip items that are folded
+      if skip_until_level
+        if item["level"] > skip_until_level
+          next
+        else
+          skip_until_level = nil
+        end
+      end
+      
+      visible << item
+      
+      # Check if this item is folded and has children
+      if item["fold"] && has_children_in_array?(visible.length - 1, @split_items)
+        skip_until_level = item["level"]
+      end
+    end
+    
+    visible
+  end
+  
   def render_split_pane
     return unless @split_view && @split_pane
     
-    # Similar to render_main but for split pane
-    view_height = @split_pane.h
-    if @split_current < @split_offset
-      @split_offset = @split_current
-    elsif @split_current >= @split_offset + view_height
-      @split_offset = @split_current - view_height + 1
-    end
+    # Get visible items respecting fold state
+    visible_items = get_visible_split_items
     
+    # Build ALL lines for the pane (like we do for main pane)
     lines = []
-    start_idx = @split_offset
-    end_idx = [@split_offset + view_height, @split_items.length].min
-    
-    (start_idx...end_idx).each do |idx|
-      item = @split_items[idx]
+    visible_items.each_with_index do |item, idx|
       next unless item
       
       line = "    " * item["level"]
       
-      # Add fold indicator
-      if has_children_in_array?(idx, @split_items) && item["fold"]
-        line += "▶ ".fg("245")
-      elsif has_children_in_array?(idx, @split_items)
-        line += "▷ ".fg("245")
+      # Add fold indicator with colors
+      # Find the item's position in the original split_items array
+      real_idx = @split_items.index(item)
+      if real_idx && has_children_in_array?(real_idx, @split_items)
+        if item["fold"]
+          line += "▶".fg("245") + " "
+        else
+          line += "▷".fg("245") + " "
+        end
       else
         line += "  "
       end
       
-      # Process text (simplified for split view)
-      line += process_text(item["text"], false)
+      # Apply process_text for syntax highlighting
+      processed = process_text(item["text"], false)
+      line += processed
       
-      # Highlight current line in split pane
+      # Apply background highlighting for current item in split pane
       if idx == @split_current
-        line = line.bg("237")  # Dark gray background to preserve foreground colors
+        # Choose background color based on whether this is the active pane
+        bg_color = @active_pane == :split ? "237" : "234"
+        bg_code = "\e[48;5;#{bg_color}m"
+        reset_bg = "\e[49m"
+        line = bg_code + line.gsub(/\e\[49m/, '') + reset_bg
       end
       
       lines << line
     end
     
+    # Add a blank line at the bottom to show end of document
+    lines << ""
+    
+    # Set the full content to the pane and let rcurses handle scrolling
     @split_pane.text = lines.join("\n")
+    
+    # Calculate how many extra lines are created by wrapping
+    extra_wrapped_lines = 0
+    lines[0..-2].each do |line|  # Exclude the blank line we added
+      # Remove ANSI codes for length calculation
+      clean_line = line.gsub(/\e\[[0-9;]*m/, '')
+      if clean_line.length > @split_pane.w
+        # This line will wrap - calculate how many extra lines it creates
+        extra_lines = (clean_line.length.to_f / @split_pane.w).ceil - 1
+        extra_wrapped_lines += extra_lines
+      end
+    end
+    
+    # Calculate scroll position exactly like RTFM does, but account for wrapping
+    scrolloff = 3
+    total = visible_items.length + 1  # +1 for the blank line
+    page = @split_pane.h
+    
+    if total <= page
+      # If everything fits, always start from the very top
+      @split_pane.ix = 0
+    elsif @split_current - @split_pane.ix < scrolloff
+      # If we're too close to the top of the pane, scroll up
+      @split_pane.ix = [@split_current - scrolloff, 0].max
+    elsif (@split_pane.ix + page - 1 - @split_current) < scrolloff
+      # If we're too close to the bottom of the pane, scroll down
+      # Account for wrapped lines dynamically
+      max_off = [total - page + extra_wrapped_lines, 0].max
+      @split_pane.ix = [@split_current + scrolloff - page + 1, max_off].min
+    end
+    
     @split_pane.refresh
   end
   
@@ -3467,11 +3777,22 @@ class HyperListApp
   
   def move_in_active_pane(direction)
     if @split_view && @active_pane == :split
+      visible = get_visible_split_items
       case direction
       when :down
-        @split_current = [@split_current + 1, @split_items.length - 1].min if @split_current < @split_items.length - 1
+        if @split_current >= visible.length - 1
+          # Wrap to top
+          @split_current = 0
+        else
+          @split_current = @split_current + 1
+        end
       when :up
-        @split_current = [@split_current - 1, 0].max if @split_current > 0
+        if @split_current <= 0
+          # Wrap to bottom
+          @split_current = visible.length - 1
+        else
+          @split_current = @split_current - 1
+        end
       end
     else
       case direction
@@ -3957,28 +4278,57 @@ class HyperListApp
           go_to_first_child
         when "LEFT"
           # Unindent only the current item
-          indent_left(false)
+          if @split_view && @active_pane == :split
+            indent_split_left(false)
+          else
+            indent_left(false)
+          end
         when "RIGHT"
           # Indent only the current item
-          indent_right(false)
+          if @split_view && @active_pane == :split
+            indent_split_right(false)
+          else
+            indent_right(false)
+          end
         when "PgUP"  # Page Up
           page_up
         when "PgDOWN"  # Page Down
           page_down
         when "HOME"   # Home
-          @current = 0
-          @offset = 0
-          update_presentation_focus if @presentation_mode
+          if @split_view && @active_pane == :split
+            @split_current = 0
+          else
+            @current = 0
+            @offset = 0
+            update_presentation_focus if @presentation_mode
+          end
         when "END"    # End
-          @current = get_visible_items.length - 1
-          update_presentation_focus if @presentation_mode
+          if @split_view && @active_pane == :split
+            visible = get_visible_split_items
+            @split_current = [visible.length - 1, 0].max
+          else
+            visible = get_visible_items
+            @current = [visible.length - 1, 0].max
+            update_presentation_focus if @presentation_mode
+          end
         when "g"  # Go to top (was gg)
-          @current = 0
-          @offset = 0
-          update_presentation_focus if @presentation_mode
+          if @split_view && @active_pane == :split
+            @split_current = 0
+          else
+            @current = 0
+            @offset = 0
+            update_presentation_focus if @presentation_mode
+          end
         when "G"  # Go to bottom
-          @current = get_visible_items.length - 1
-          update_presentation_focus if @presentation_mode
+          if @split_view && @active_pane == :split
+            visible = get_visible_split_items
+            @split_current = [visible.length - 1, 0].max
+          else
+            visible = get_visible_items
+            @current = [visible.length - 1, 0].max
+            # Let normal offset logic position the last item
+            update_presentation_focus if @presentation_mode
+          end
         when "R"  # Jump to reference (was gr)
           jump_to_reference
         when "F"  # Open file reference (was gf)
@@ -4038,6 +4388,8 @@ class HyperListApp
           delete_line(false)  # D always deletes with children by default
         when "C-D"  # Delete line and all descendants explicitly
           delete_line(true)
+        when "C-E"  # Toggle line encryption
+          toggle_line_encryption
         when "y"  # Yank/copy single line
           yank_line(false)
         when "Y"  # Yank/copy line with all descendants
@@ -4056,10 +4408,18 @@ class HyperListApp
           move_item_up(true)
         when "TAB"
           # Indent with all children
-          indent_right(true)
+          if @split_view && @active_pane == :split
+            indent_split_right(true)
+          else
+            indent_right(true)
+          end
         when "S-TAB"  # Shift-Tab
           # Unindent with all children
-          indent_left(true)
+          if @split_view && @active_pane == :split
+            indent_split_left(true)
+          else
+            indent_left(true)
+          end
         when "u"
           undo
         when "\x12"  # Ctrl-R for redo (0x12 is Ctrl-R ASCII code)
@@ -4068,8 +4428,6 @@ class HyperListApp
           toggle_checkbox
         when "V"
           toggle_checkbox_with_date
-        when "\x05"  # Ctrl-E for encryption toggle
-          toggle_line_encryption
         when "."
           repeat_last_action
         when "/"
@@ -4080,11 +4438,34 @@ class HyperListApp
           jump_to_next_template_marker
         when "P"
           toggle_presentation_mode
+        when "\x15"  # Ctrl-U for State/Transition underline toggle
+          # Cycle through underline modes: 0 (none) -> 1 (states) -> 2 (transitions) -> 0
+          @st_underline_mode = (@st_underline_mode + 1) % 3
+          # Clear cache to force re-rendering
+          @processed_cache.clear
+          case @st_underline_mode
+          when 0
+            @message = "Underline mode: OFF"
+          when 1
+            @message = "Underline mode: STATES (S: and |)"
+          when 2
+            @message = "Underline mode: TRANSITIONS (T: and /)"
+          end
         when "\\"
           next_c = getchr
           case next_c
           when "u"
-            @message = "Underline mode toggled"
+            # Alternative for Ctrl-U (backslash-u)
+            @st_underline_mode = (@st_underline_mode + 1) % 3
+            @processed_cache.clear
+            case @st_underline_mode
+            when 0
+              @message = "Underline mode: OFF"
+            when 1
+              @message = "Underline mode: STATES (S: and |)"
+            when 2
+              @message = "Underline mode: TRANSITIONS (T: and /)"
+            end
           end
         when ":"
           handle_command
@@ -4128,15 +4509,16 @@ class HyperListApp
           next_c = getchr
           play_macro(next_c) if next_c && next_c =~ /[a-z]/
         when "w"
-          # Check if it's a window command (ww for window switch)
-          next_c = getchr
-          if next_c == "w" && @split_view
-            # Switch active pane
+          # Switch active pane if split view is active
+          if @split_view
             @active_pane = (@active_pane == :main) ? :split : :main
             @message = "Switched to #{@active_pane} pane"
+            # Force re-render both panes to update highlighting
+            render_main
+            render_split_pane
+            render_footer
           else
-            # Not a window command, ignore for now
-            @message = "Unknown command: w#{next_c}"
+            @message = "Split view not active. Use :vs to enable"
           end
         when "Q"  # Force quit
           quit
