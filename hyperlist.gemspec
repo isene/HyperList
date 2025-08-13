@@ -1,11 +1,11 @@
 Gem::Specification.new do |spec|
   spec.name          = "hyperlist"
-  spec.version       = "1.0.0"
+  spec.version       = "1.1.0"
   spec.authors       = ["Geir Isene"]
   spec.email         = ["g@isene.com"]
 
   spec.summary       = "A powerful Terminal User Interface for HyperList management"
-  spec.description   = "HyperList is a Ruby TUI application for creating, editing, and managing hierarchical lists using the HyperList methodology. It features rich syntax highlighting, advanced folding, powerful navigation, full editing capabilities, checkbox support, and multiple export formats."
+  spec.description   = "HyperList is a Ruby TUI application for creating, editing, and managing hierarchical lists using the HyperList methodology. It features rich syntax highlighting, advanced folding, powerful navigation, full editing capabilities, checkbox support, encryption for sensitive data, enhanced presentation mode, and multiple export formats."
   spec.homepage      = "https://github.com/isene/HyperList"
   spec.license       = "Unlicense"
   spec.required_ruby_version = ">= 3.0.0"

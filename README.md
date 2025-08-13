@@ -1,5 +1,11 @@
 # HyperList TUI
 
+[![Gem Version](https://badge.fury.io/rb/hyperlist.svg)](https://badge.fury.io/rb/hyperlist)
+[![License](https://img.shields.io/badge/License-Public%20Domain-brightgreen.svg)](https://unlicense.org/)
+[![Ruby](https://img.shields.io/badge/Ruby-3.0%2B-red.svg)](https://www.ruby-lang.org/)
+[![GitHub stars](https://img.shields.io/github/stars/isene/HyperList.svg)](https://github.com/isene/HyperList/stargazers)
+[![Stay Amazing](https://img.shields.io/badge/Stay-Amazing-blue.svg)](https://isene.org)
+
 <img src="hyperlist_logo.svg" align="left" width="150" height="150">
 
 A powerful Terminal User Interface (TUI) application for creating, editing, and managing HyperLists - a methodology for describing anything in a hierarchical, structured format.
@@ -22,6 +28,25 @@ For historical context and the original VIM implementation, see: [hyperlist.vim]
 ### Help Screen
 ![HyperList Help](screenshot_help.png)
 
+## What's New in v1.1.0
+
+### 🔐 Encryption Support
+- **File-level encryption** for sensitive files (dot files like `.passwords.hl`)
+- **Line-level encryption** for individual items (Ctrl-E to toggle)
+- Secure AES-256-CBC encryption with PBKDF2 key derivation
+- Password caching for the session
+
+### 🎯 Enhanced Presentation Mode
+- **Auto-collapse** everything outside the current context
+- **Smart focus**: Shows only current item, ancestors, and immediate children
+- **Visual hierarchy**: Focused items in full color, others greyed out
+- Improved navigation with proper cursor tracking
+
+### 🎨 Better Visual Experience
+- **Improved highlighting**: Dark gray background preserves syntax colors
+- **Subtle selection**: No more harsh reverse video
+- **Preserved colors**: All HyperList elements maintain their colors when selected
+
 ## Features
 
 ### Core Functionality
@@ -38,7 +63,13 @@ For historical context and the original VIM implementation, see: [hyperlist.vim]
 - **Full Editing Capabilities**: Create, edit, delete, move, and reorganize items
 - **Checkbox Support**: Multiple checkbox types with completion tracking
 - **Template System**: Jump to and fill in template markers
-- **Presentation Mode**: Focus on current item and ancestors only
+- **Presentation Mode**: Focus on current item with auto-collapse
+
+### Security Features
+- **Encryption**: Protect sensitive data with AES-256 encryption
+- **Automatic detection**: Dot files automatically prompt for encryption
+- **Line-level security**: Encrypt individual sensitive items
+- **Visual indicators**: Encrypted lines show lock icon
 
 ### Text Formatting
 - **Bold**: `*text*`
@@ -59,6 +90,7 @@ For historical context and the original VIM implementation, see: [hyperlist.vim]
 - Multiple file support with recent files list
 - Autosave functionality with configurable intervals
 - Split view for working with multiple lists
+- Encryption support for sensitive files
 
 ## Installation
 
@@ -86,6 +118,7 @@ chmod +x hyperlist
 ```bash
 hyperlist                    # Start with empty document
 hyperlist file.hl           # Open existing HyperList file
+hyperlist .passwords.hl     # Open encrypted file (will prompt for password)
 hyperlist file.txt          # Open any text file
 ```
 
@@ -121,9 +154,10 @@ hyperlist file.txt          # Open any text file
 #### Features
 - `v` - Toggle checkbox
 - `V` - Toggle checkbox with timestamp
+- `C-E` - Encrypt/decrypt current line
 - `R` - Go to reference
 - `F` - Open file reference
-- `P` - Presentation mode
+- `P` - Presentation mode (with auto-collapse)
 - `?` - Help screen
 
 #### File Commands
@@ -148,6 +182,19 @@ Daily Tasks
         [ ] Code review
     [X] Lunch break
     [ ] Afternoon tasks
+```
+
+### Encrypted Password Manager
+Save as `.passwords.hl` for automatic encryption:
+```
+Online Accounts
+    GitHub
+        Username: myuser
+        Password: [will be encrypted]
+        2FA: enabled
+    Banking
+        Account: 12345678
+        PIN: [will be encrypted]
 ```
 
 ### Project Structure

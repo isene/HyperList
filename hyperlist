@@ -7,7 +7,7 @@
 # Check for help/version BEFORE loading any libraries
 if ARGV[0] == '-h' || ARGV[0] == '--help'
   puts <<~HELP
-    HyperList v1.0.1 - Terminal User Interface for HyperList files
+    HyperList v1.1.0 - Terminal User Interface for HyperList files
     
     USAGE
       hyperlist [OPTIONS] [FILE]
@@ -52,7 +52,7 @@ if ARGV[0] == '-h' || ARGV[0] == '--help'
   HELP
   exit 0
 elsif ARGV[0] == '-v' || ARGV[0] == '--version'
-  puts "HyperList v1.0.1"
+  puts "HyperList v1.1.0"
   exit 0
 end
 
@@ -61,13 +61,16 @@ require 'io/console'
 require 'date'
 require 'rcurses'
 require 'cgi'
+require 'openssl'
+require 'digest'
+require 'base64'
 
 class HyperListApp
   include Rcurses
   include Rcurses::Input
   include Rcurses::Cursor
   
-  VERSION = "1.0.1"
+  VERSION = "1.1.0"
   
   def initialize(filename = nil)
     @filename = filename ? File.expand_path(filename) : nil
@@ -100,6 +103,8 @@ class HyperListApp
     @macro_register = {}  # Store macros by key
     @macro_buffer = []  # Current macro being recorded
     @macro_key = nil  # Key for current macro
+    @encryption_key = nil  # Store derived encryption key
+    @encrypted_lines = {}  # Track which lines are encrypted
     @split_view = false
     @split_items = []  # Second view items
     @split_current = 0  # Second view cursor
@@ -165,13 +170,36 @@ class HyperListApp
   
   def load_file(file)
     @items = []
-    lines = File.readlines(file) rescue []
+    @encrypted_lines = {}
+    
+    # Read file content
+    content = File.read(file) rescue ""
     
     # Clear undo/redo stacks when loading a new file
     @undo_stack = []
     @undo_position = []
     @redo_stack = []
     @redo_position = []
+    
+    # Check if file is encrypted (dot file or encrypted content)
+    if is_encrypted_file?(file)
+      if content.start_with?("ENC:")
+        # Whole file is encrypted
+        decrypted_content = decrypt_file(content)
+        if decrypted_content.nil?
+          @message = "Failed to decrypt file"
+          @items = [{"text" => "Failed to decrypt file", "level" => 0, "fold" => false}]
+          return
+        end
+        lines = decrypted_content.split("\n")
+        @message = "File decrypted successfully"
+      else
+        # Dot file but not encrypted yet - just load normally
+        lines = content.split("\n")
+      end
+    else
+      lines = content.split("\n")
+    end
     
     # Check if file is large
     large_file = lines.length > 10000
@@ -186,6 +214,12 @@ class HyperListApp
       next if line.strip.empty?
       level = line[/^\t*/].length
       text = line.strip
+      
+      # Track encrypted lines
+      if text.start_with?("ENC:")
+        @encrypted_lines[@items.length] = true
+      end
+      
       @items << {"text" => text, "level" => level, "fold" => false}
       
       # Update progress for large files
@@ -346,13 +380,48 @@ class HyperListApp
   def save_file
     return unless @filename
     
-    File.open(@filename, 'w') do |f|
-      @items.each do |item|
-        f.puts("\t" * item["level"] + item["text"])
+    # Prepare content
+    content = @items.map do |item|
+      "\t" * item["level"] + item["text"]
+    end.join("\n")
+    
+    # Check if this should be an encrypted file
+    if is_encrypted_file?(@filename) && !content.empty?
+      # Check if any lines are already encrypted
+      has_encrypted_lines = @items.any? { |item| item["text"].start_with?("ENC:") }
+      
+      if !has_encrypted_lines
+        # Ask if user wants to encrypt the whole file
+        @footer.text = "Encrypt entire file? (y/n): "
+        @footer.refresh
+        response = getchr
+        
+        if response.downcase == 'y'
+          encrypted_content = encrypt_file(content)
+          if encrypted_content
+            File.write(@filename, encrypted_content)
+            @message = "File saved (encrypted)"
+          else
+            @message = "Encryption cancelled - file not saved"
+            return
+          end
+        else
+          # Save as plain text even though it's a dot file
+          File.write(@filename, content)
+          @message = "Saved to #{@filename} (unencrypted)"
+        end
+      else
+        # Has encrypted lines, save as is
+        File.write(@filename, content)
+        @message = "Saved to #{@filename}"
       end
+    else
+      # Regular file, save normally
+      File.write(@filename, content)
+      @message = "Saved to #{@filename}"
     end
+    
     @modified = false
-    @message = "Saved to #{@filename}"
     @last_auto_save = Time.now if @auto_save_enabled
   end
   
@@ -651,8 +720,8 @@ class HyperListApp
       # Create cache key for this item
       cache_key = "#{item['text']}_#{item['level']}_#{item['fold']}"
       
-      # Check cache first
-      if @processed_cache[cache_key] && idx != @current
+      # Check cache first (skip cache in presentation mode to ensure proper rendering)
+      if @processed_cache[cache_key] && idx != @current && !@presentation_mode
         lines << @processed_cache[cache_key]
       else
         line = "    " * item["level"]  # 4 spaces per level
@@ -660,9 +729,13 @@ class HyperListApp
         # Add fold indicator
         real_idx = @items.index(item)  # Get the real index in the full array
         if real_idx && has_children?(real_idx, @items) && item["fold"]
-          line += "▶".fg("245") + " "  # Gray triangle for collapsed (has hidden children)
+          # Use darker grey for unfocused items in presentation mode
+          color = (@presentation_mode && !is_item_in_presentation_focus?(item)) ? "240" : "245"
+          line += "▶".fg(color) + " "  # Triangle for collapsed (has hidden children)
         elsif real_idx && has_children?(real_idx, @items)
-          line += "▷".fg("245") + " "  # Gray triangle for expanded (has visible children)
+          # Use darker grey for unfocused items in presentation mode
+          color = (@presentation_mode && !is_item_in_presentation_focus?(item)) ? "240" : "245"
+          line += "▷".fg(color) + " "  # Triangle for expanded (has visible children)
         else
           line += "  "
         end
@@ -699,23 +772,31 @@ class HyperListApp
           if item["raw"]
             line += item["text"]
           else
-            processed_text_key = has_match ? "search_#{item['text']}_#{@search}" : "text_#{item['text']}"
-            if @processed_cache[processed_text_key] && !has_match
-              line += @processed_cache[processed_text_key]
+            # Check if we should grey out this item in presentation mode
+            if @presentation_mode && !is_item_in_presentation_focus?(item)
+              # Grey out items not in focus
+              line += item["text"].fg("240")  # Dark grey for unfocused items
             else
-              processed = process_text(item["text"], has_match)
-              @processed_cache[processed_text_key] = processed if @processed_cache.size < 1000 && !has_match
-              line += processed
+              processed_text_key = has_match ? "search_#{item['text']}_#{@search}" : "text_#{item['text']}"
+              if @processed_cache[processed_text_key] && !has_match && !@presentation_mode
+                line += @processed_cache[processed_text_key]
+              else
+                processed = process_text(item["text"], has_match)
+                @processed_cache[processed_text_key] = processed if @processed_cache.size < 1000 && !has_match && !@presentation_mode
+                line += processed
+              end
             end
           end
         end
         
-        # Cache the line (without highlight)
-        @processed_cache[cache_key] = line if idx != @current
+        # Cache the line (without highlight) - but not in presentation mode or for focused items
+        if idx != @current && !@presentation_mode && !item["presentation_focus"]
+          @processed_cache[cache_key] = line
+        end
         
-        # Highlight current line
+        # Highlight current line with dark gray background
         if idx == @current
-          line = line.r  # Always use reverse (white background) for current line
+          line = line.bg("237")  # Dark gray background to preserve foreground colors
         end
         
         lines << line
@@ -741,6 +822,12 @@ class HyperListApp
       return result
     end
     
+    # Check if this is an encrypted line
+    if result.start_with?("ENC:")
+      # Show encrypted indicator instead of the encrypted data
+      return "🔒 [ENCRYPTED LINE - Press Ctrl-E to decrypt]".fg("196")  # Bright red
+    end
+    
     # Check if this is a literal block marker (single backslash)
     if result.strip == "\\"
       return result.fg("3")  # Yellow for literal block markers
@@ -750,7 +837,7 @@ class HyperListApp
     if highlight_search && @search && !@search.empty?
       # Find all occurrences of the search term (case insensitive)
       search_regex = Regexp.new(Regexp.escape(@search), Regexp::IGNORECASE)
-      result.gsub!(search_regex) { |match| match.bg("226").fg("0") }  # Yellow background, black text
+      result.gsub!(search_regex) { |match| match.bg("220") }  # Yellow background, preserve text color
     end
     
     # Handle identifiers at the beginning (like "1.1.1.1" or "1A1A")
@@ -1036,21 +1123,25 @@ class HyperListApp
   
   def move_up
     @current = [@current - 1, 0].max
+    update_presentation_focus if @presentation_mode
   end
   
   def move_down
     max = get_visible_items.length - 1
     @current = [@current + 1, max].min
+    update_presentation_focus if @presentation_mode
   end
   
   def page_up
     @current = [@current - (@main.h - 1), 0].max
     @offset = [@offset - (@main.h - 1), 0].max
+    update_presentation_focus if @presentation_mode
   end
   
   def page_down
     max = get_visible_items.length - 1
     @current = [@current + (@main.h - 1), max].min
+    update_presentation_focus if @presentation_mode
   end
   
   def go_to_parent
@@ -1064,6 +1155,7 @@ class HyperListApp
     (@current - 1).downto(0) do |i|
       if visible[i]["level"] < current_level
         @current = i
+        update_presentation_focus if @presentation_mode
         break
       end
     end
@@ -1076,6 +1168,7 @@ class HyperListApp
     current_level = visible[@current]["level"]
     if visible[@current + 1]["level"] > current_level
       @current += 1
+      update_presentation_focus if @presentation_mode
     end
   end
   
@@ -1116,52 +1209,102 @@ class HyperListApp
   
   def toggle_presentation_mode
     if @presentation_mode
-      # Exit presentation mode - restore all items
+      # Exit presentation mode - restore normal view
       @presentation_mode = false
-      @items.each { |item| item["fold"] = false }
+      # Clear all presentation focus flags and unfold everything
+      @items.each do |item| 
+        item["presentation_focus"] = false
+        item["fold"] = false  # Unfold everything when exiting presentation mode
+      end
+      # Clear cache to force re-rendering
+      @processed_cache.clear
       @message = "Presentation mode disabled"
     else
-      # Enter presentation mode - show only current item and ancestors
+      # Enter presentation mode
+      # Remember which item we're on before any folding changes
+      visible_items = get_visible_items
+      if @current < visible_items.length
+        target_item = visible_items[@current]
+      end
+      
       @presentation_mode = true
-      show_only_current_and_ancestors
-      @message = "Presentation mode enabled"
+      # Clear cache to force re-rendering  
+      @processed_cache.clear
+      update_presentation_focus
+      
+      # Make sure cursor is still on the same item after initial folding
+      if target_item
+        new_visible = get_visible_items
+        new_position = new_visible.index(target_item)
+        @current = new_position if new_position
+      end
+      
+      @message = "Presentation mode enabled - focus on current item"
     end
   end
   
-  def show_only_current_and_ancestors
+  def update_presentation_focus
+    # This method updates the focus in presentation mode
+    # It will be called whenever the cursor moves
+    return unless @presentation_mode
+    
     visible_items = get_visible_items
     return if visible_items.empty? || @current >= visible_items.length
     
+    # Remember which item we're focused on
     current_item = visible_items[@current]
     current_level = current_item["level"]
     current_real_idx = @items.index(current_item)
     
     # First, fold everything
-    @items.each { |item| item["fold"] = true }
+    @items.each_with_index do |item, idx|
+      item["fold"] = has_children?(idx, @items)
+      item["presentation_focus"] = false
+    end
     
-    # Unfold current item
+    # Mark current item as in focus and unfold it
+    current_item["presentation_focus"] = true
     current_item["fold"] = false
     
-    # Unfold all ancestors
-    ancestor_level = current_level - 1
+    # Unfold all ancestors of current item
+    ancestor_indices = []
+    search_level = current_level - 1
     idx = current_real_idx - 1
     
-    while idx >= 0 && ancestor_level >= 0
-      if @items[idx]["level"] == ancestor_level
+    while idx >= 0 && search_level >= 0
+      if @items[idx]["level"] == search_level
         @items[idx]["fold"] = false
-        ancestor_level -= 1
+        @items[idx]["presentation_focus"] = false  # Ancestors visible but not focused
+        ancestor_indices << idx
+        search_level -= 1
       end
       idx -= 1
     end
     
-    # Unfold immediate children of current item
+    # Mark immediate children as in focus (only one level down)
     idx = current_real_idx + 1
     while idx < @items.length && @items[idx]["level"] > current_level
       if @items[idx]["level"] == current_level + 1
-        @items[idx]["fold"] = false
+        @items[idx]["presentation_focus"] = true
+        # Don't unfold children - let them stay folded unless user explicitly unfolds
       end
       idx += 1
     end
+    
+    # Now recalculate the cursor position to point to the same item
+    new_visible_items = get_visible_items
+    new_position = new_visible_items.index(current_item)
+    if new_position
+      @current = new_position
+    end
+    
+    # Clear cache to force re-rendering with new focus
+    @processed_cache.clear
+  end
+  
+  def is_item_in_presentation_focus?(item)
+    return true unless @presentation_mode
+    item["presentation_focus"] == true
   end
   
   def save_undo_state
@@ -1883,8 +2026,9 @@ class HyperListApp
     help_lines << ""
     help_lines << "#{"FEATURES".fg("14")}"
     help_lines << help_line("#{"v".fg("10")}", "Toggle checkbox", "#{"V".fg("10")}", "Checkbox with date")
-    help_lines << help_line("#{"R".fg("10")}", "Go to reference", "#{"F".fg("10")}", "Open file")
-    help_lines << help_line("#{"N".fg("10")}", "Next = marker", "#{"P".fg("10")}", "Presentation mode")
+    help_lines << help_line("#{"C-E".fg("10")}", "Encrypt/decrypt line", "#{"R".fg("10")}", "Go to reference")
+    help_lines << help_line("#{"F".fg("10")}", "Open file", "#{"N".fg("10")}", "Next = marker")
+    help_lines << help_line("#{"P".fg("10")}", "Presentation mode")
     help_lines << help_line("#{"t".fg("10")}", "Insert template", "#{":template".fg("10")}", "Show templates")
     help_lines << help_line("#{"Ma".fg("10")}", "Record macro 'a'", "#{"@a".fg("10")}", "Play macro 'a'")
     help_lines << help_line("#{":vsplit".fg("10")}", "Split view vertically", "#{"ww".fg("10")}", "Switch panes")
@@ -2731,6 +2875,154 @@ class HyperListApp
       @message = "File not found: #{filepath}"
     end
   end
+
+  # Encryption methods
+  def prompt_password(prompt = "Password: ")
+    @footer.text = prompt
+    @footer.refresh
+    
+    password = ""
+    loop do
+      c = getchr
+      case c
+      when "ENTER"
+        break
+      when "BACKSPACE", "C-h"
+        password.chop! unless password.empty?
+      when "ESC", "C-c"
+        return nil
+      else
+        if c.length == 1 && c.ord >= 32 && c.ord <= 126
+          password += c
+        end
+      end
+      @footer.text = prompt + "*" * password.length
+      @footer.refresh
+    end
+    password
+  end
+
+  def derive_key(password, salt = nil)
+    salt ||= OpenSSL::Random.random_bytes(16)
+    iterations = 10000
+    key_len = 32  # 256-bit key
+    key = OpenSSL::PKCS5.pbkdf2_hmac(password, salt, iterations, key_len, OpenSSL::Digest::SHA256.new)
+    [key, salt]
+  end
+
+  def encrypt_string(text, password = nil)
+    password ||= @encryption_key || prompt_password("Enter encryption password: ")
+    return nil unless password
+    
+    # Store key for session if not already stored
+    @encryption_key ||= password
+    
+    cipher = OpenSSL::Cipher.new('AES-256-CBC')
+    cipher.encrypt
+    
+    salt = OpenSSL::Random.random_bytes(16)
+    key, _ = derive_key(password, salt)
+    cipher.key = key
+    
+    iv = cipher.random_iv
+    encrypted = cipher.update(text) + cipher.final
+    
+    # Combine salt, iv, and encrypted data, then base64 encode
+    combined = salt + iv + encrypted
+    "ENC:" + Base64.strict_encode64(combined)
+  end
+
+  def decrypt_string(encrypted_text, password = nil)
+    return encrypted_text unless encrypted_text.start_with?("ENC:")
+    
+    password ||= @encryption_key || prompt_password("Enter decryption password: ")
+    return nil unless password
+    
+    # Store key for session if not already stored
+    @encryption_key ||= password
+    
+    begin
+      data = Base64.strict_decode64(encrypted_text[4..-1])
+      
+      salt = data[0..15]
+      iv = data[16..31]
+      encrypted = data[32..-1]
+      
+      cipher = OpenSSL::Cipher.new('AES-256-CBC')
+      cipher.decrypt
+      
+      key, _ = derive_key(password, salt)
+      cipher.key = key
+      cipher.iv = iv
+      
+      cipher.update(encrypted) + cipher.final
+    rescue => e
+      @message = "Decryption failed. Wrong password?"
+      nil
+    end
+  end
+
+  def is_encrypted_file?(filename)
+    # Check if it's a dot file or has .enc extension
+    basename = File.basename(filename)
+    return true if basename.start_with?(".")
+    return true if filename.end_with?(".enc")
+    
+    # Check first line of file for encryption marker
+    begin
+      first_line = File.open(filename, &:readline).strip
+      first_line.start_with?("ENC:")
+    rescue
+      false
+    end
+  end
+
+  def encrypt_file(content, password = nil)
+    password ||= @encryption_key || prompt_password("Enter file encryption password: ")
+    return nil unless password
+    
+    encrypt_string(content, password)
+  end
+
+  def decrypt_file(encrypted_content, password = nil)
+    password ||= @encryption_key || prompt_password("Enter file decryption password: ")
+    return nil unless password
+    
+    decrypt_string(encrypted_content, password)
+  end
+
+  def toggle_line_encryption
+    return if @items.empty?
+    
+    item = @items[@current]
+    current_text = item["text"]
+    
+    if current_text.start_with?("ENC:")
+      # Decrypt the line
+      decrypted = decrypt_string(current_text)
+      if decrypted
+        save_state
+        item["text"] = decrypted
+        @encrypted_lines.delete(@current)
+        @modified = true
+        @message = "Line decrypted"
+      else
+        @message = "Decryption failed"
+      end
+    else
+      # Encrypt the line
+      encrypted = encrypt_string(current_text)
+      if encrypted
+        save_state
+        item["text"] = encrypted
+        @encrypted_lines[@current] = true
+        @modified = true
+        @message = "Line encrypted"
+      else
+        @message = "Encryption cancelled"
+      end
+    end
+  end
   
   def load_templates
     {
@@ -3156,7 +3448,7 @@ class HyperListApp
       
       # Highlight current line in split pane
       if idx == @split_current
-        line = line.r  # Always use reverse (white background) for current line
+        line = line.bg("237")  # Dark gray background to preserve foreground colors
       end
       
       lines << line
@@ -3676,13 +3968,17 @@ class HyperListApp
         when "HOME"   # Home
           @current = 0
           @offset = 0
+          update_presentation_focus if @presentation_mode
         when "END"    # End
           @current = get_visible_items.length - 1
+          update_presentation_focus if @presentation_mode
         when "g"  # Go to top (was gg)
           @current = 0
           @offset = 0
+          update_presentation_focus if @presentation_mode
         when "G"  # Go to bottom
           @current = get_visible_items.length - 1
+          update_presentation_focus if @presentation_mode
         when "R"  # Jump to reference (was gr)
           jump_to_reference
         when "F"  # Open file reference (was gf)
@@ -3772,6 +4068,8 @@ class HyperListApp
           toggle_checkbox
         when "V"
           toggle_checkbox_with_date
+        when "\x05"  # Ctrl-E for encryption toggle
+          toggle_line_encryption
         when "."
           repeat_last_action
         when "/"

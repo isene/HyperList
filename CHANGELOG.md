@@ -2,6 +2,34 @@
 
 All notable changes to the HyperList Ruby TUI will be documented in this file.
 
+## [1.1.0] - 2025-08-13
+
+### Added
+- **Encryption Support**
+  - File-level encryption for sensitive files (automatic for dot files)
+  - Line-level encryption for individual items (Ctrl-E to toggle)
+  - Secure AES-256-CBC encryption with PBKDF2 key derivation
+  - Password caching for the session
+  - Visual indicators for encrypted content (lock icon)
+
+- **Enhanced Presentation Mode**
+  - Auto-collapse everything outside the current context
+  - Smart focus showing only current item, ancestors, and immediate children
+  - Visual hierarchy with focused items in full color, others greyed out
+  - Proper cursor tracking when folding changes
+
+### Changed
+- **Improved Visual Experience**
+  - Current line highlighting now uses dark gray background instead of reverse video
+  - Preserves all syntax colors when items are selected
+  - Search highlighting no longer overrides text colors
+  - More subtle and professional appearance
+
+### Fixed
+- Cursor position tracking in presentation mode when folds change
+- Cache invalidation issues in presentation mode
+- Navigation responsiveness improvements
+
 ## [1.0.0] - 2025-08-12
 
 ### Initial Release
