@@ -7,7 +7,7 @@
 # Check for help/version BEFORE loading any libraries
 if ARGV[0] == '-h' || ARGV[0] == '--help'
   puts <<~HELP
-    HyperList v1.1.4 - Terminal User Interface for HyperList files
+    HyperList v1.1.5 - Terminal User Interface for HyperList files
     
     USAGE
       hyperlist [OPTIONS] [FILE]
@@ -52,7 +52,7 @@ if ARGV[0] == '-h' || ARGV[0] == '--help'
   HELP
   exit 0
 elsif ARGV[0] == '-v' || ARGV[0] == '--version'
-  puts "HyperList v1.1.4"
+  puts "HyperList v1.1.5"
   exit 0
 end
 
@@ -70,7 +70,7 @@ class HyperListApp
   include Rcurses::Input
   include Rcurses::Cursor
   
-  VERSION = "1.1.4"
+  VERSION = "1.1.5"
   
   def initialize(filename = nil)
     @filename = filename ? File.expand_path(filename) : nil
@@ -706,7 +706,7 @@ class HyperListApp
       line = "    " * item["level"]  # 4 spaces per level
       
       # Add fold indicator
-      real_idx = @items.index(item)
+      real_idx = get_real_index(item)
       if real_idx && has_children?(real_idx, @items) && item["fold"]
         color = (@presentation_mode && !is_item_in_presentation_focus?(item)) ? "240" : "245"
         line += "▶".fg(color) + " "
@@ -1111,7 +1111,10 @@ class HyperListApp
         next
       end
       
-      visible << item
+      # Store the item with its real index to avoid lookup issues
+      item_with_index = item.dup
+      item_with_index["_real_index"] = idx
+      visible << item_with_index
       
       if item["fold"] && has_children?(idx, @items)
         # Skip children if folded
@@ -1127,6 +1130,12 @@ class HyperListApp
     end
     
     visible
+  end
+  
+  # Helper method to get the real index from a visible item
+  def get_real_index(visible_item)
+    return nil unless visible_item
+    visible_item["_real_index"] || @items.index(visible_item)
   end
   
   def has_children?(idx, items)
@@ -1219,7 +1228,7 @@ class HyperListApp
       return if @current >= visible.length
       
       item = visible[@current]
-      real_idx = @items.index(item)
+      real_idx = get_real_index(item)
       
       if real_idx && has_children?(real_idx, @items)
         @items[real_idx]["fold"] = !@items[real_idx]["fold"]
@@ -1385,7 +1394,7 @@ class HyperListApp
     # Remember which item we're focused on
     current_item = visible_items[@current]
     current_level = current_item["level"]
-    current_real_idx = @items.index(current_item)
+    current_real_idx = get_real_index(current_item)
     
     # First, fold everything
     @items.each_with_index do |item, idx|
@@ -1602,7 +1611,7 @@ class HyperListApp
     visible = get_visible_items
     if @current < visible.length
       level = visible[@current]["level"]
-      real_idx = @items.index(visible[@current])
+      real_idx = get_real_index(visible[@current])
       @items.insert(real_idx + 1, {"text" => text, "level" => level, "fold" => false})
     else
       @items << {"text" => text, "level" => 0, "fold" => false}
@@ -1633,7 +1642,7 @@ class HyperListApp
     visible = get_visible_items
     if @current < visible.length
       level = visible[@current]["level"] + 1
-      real_idx = @items.index(visible[@current])
+      real_idx = get_real_index(visible[@current])
       
       # Unfold parent if needed
       @items[real_idx]["fold"] = false
@@ -1651,7 +1660,7 @@ class HyperListApp
     return if @current >= visible.length
     
     item = visible[@current]
-    real_idx = @items.index(item)
+    real_idx = get_real_index(item)
     
     @mode = :insert
     
@@ -1672,7 +1681,7 @@ class HyperListApp
     return if @current >= visible.length
     
     item = visible[@current]
-    real_idx = @items.index(item)
+    real_idx = get_real_index(item)
     
     save_undo_state  # Save state before modification
     @items[real_idx]["text"] = text
@@ -1688,7 +1697,7 @@ class HyperListApp
     save_undo_state  # Save state before modification
     
     item = visible[@current]
-    real_idx = @items.index(item)
+    real_idx = get_real_index(item)
     
     # First, yank the item(s) to clipboard
     @clipboard = []
@@ -1742,7 +1751,7 @@ class HyperListApp
     return if @current >= visible.length
     
     item = visible[@current]
-    real_idx = @items.index(item)
+    real_idx = get_real_index(item)
     
     @clipboard = []
     @clipboard << item.dup
@@ -1771,7 +1780,7 @@ class HyperListApp
     
     visible = get_visible_items
     if @current < visible.length
-      real_idx = @items.index(visible[@current])
+      real_idx = get_real_index(visible[@current])
       
       if @clipboard_is_tree
         # For tree paste (C-D or Y), maintain original indentation structure
@@ -1810,7 +1819,7 @@ class HyperListApp
     save_undo_state  # Save state before modification
     
     item = visible[@current]
-    real_idx = @items.index(item)
+    real_idx = get_real_index(item)
     
     # Can't move if already at the beginning
     return if real_idx == 0
@@ -1852,7 +1861,7 @@ class HyperListApp
     save_undo_state  # Save state before modification
     
     item = visible[@current]
-    real_idx = @items.index(item)
+    real_idx = get_real_index(item)
     
     # Collect item(s) to move
     items_to_move = [item]
@@ -1896,7 +1905,7 @@ class HyperListApp
     return if @current >= visible.length
     
     item = visible[@current]
-    real_idx = @items.index(item)
+    real_idx = get_real_index(item)
     
     # Can only indent if there's a previous item at same or higher level
     if real_idx > 0
@@ -1925,7 +1934,7 @@ class HyperListApp
     return if @current >= visible.length
     
     item = visible[@current]
-    real_idx = @items.index(item)
+    real_idx = get_real_index(item)
     
     if @items[real_idx]["level"] > 0
       save_undo_state  # Save state before modification
@@ -1955,7 +1964,7 @@ class HyperListApp
     save_undo_state  # Save state before modification
     
     item = visible[@current]
-    real_idx = @items.index(item)
+    real_idx = get_real_index(item)
     text = @items[real_idx]["text"]
     
     if text =~ /^\[.\]/
@@ -1984,7 +1993,7 @@ class HyperListApp
     save_undo_state  # Save state before modification
     
     item = visible[@current]
-    real_idx = @items.index(item)
+    real_idx = get_real_index(item)
     text = @items[real_idx]["text"]
     
     # First, handle existing timestamp in the hyperlist.vim format
@@ -4197,7 +4206,7 @@ class HyperListApp
     @marks ||= {}
     visible = get_visible_items
     if @current < visible.length
-      real_idx = @items.index(visible[@current])
+      real_idx = get_real_index(visible[@current])
       @marks[mark] = real_idx
       @message = "Mark '#{mark}' set"
     end
@@ -4212,7 +4221,7 @@ class HyperListApp
       # Find the marked item in visible items
       target_idx = @marks[mark]
       visible = get_visible_items
-      visible_idx = visible.find_index { |item| @items.index(item) == target_idx }
+      visible_idx = visible.find_index { |item| get_real_index(item) == target_idx }
       
       if visible_idx
         @current = visible_idx
@@ -4348,13 +4357,13 @@ class HyperListApp
           when "o"
             visible = get_visible_items
             if @current < visible.length
-              real_idx = @items.index(visible[@current])
+              real_idx = get_real_index(visible[@current])
               @items[real_idx]["fold"] = false if real_idx
             end
           when "c"
             visible = get_visible_items
             if @current < visible.length
-              real_idx = @items.index(visible[@current])
+              real_idx = get_real_index(visible[@current])
               if real_idx && has_children?(real_idx, @items)
                 @items[real_idx]["fold"] = true
               end
