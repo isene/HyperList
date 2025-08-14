@@ -2,6 +2,14 @@
 
 All notable changes to the HyperList Ruby TUI will be documented in this file.
 
+## [1.1.7] - 2025-08-15
+
+### Fixed
+- **Updated rcurses dependency to 5.1.6**
+  - Fixes Ruby 3.4.5 hanging issue during terminal initialization
+  - rcurses now handles stdin.raw! blocking with timeout and stty fallback
+  - Fully backward compatible
+
 ## [1.1.6] - 2025-08-14
 
 ### Fixed

@@ -1,6 +1,6 @@
 Gem::Specification.new do |spec|
   spec.name          = "hyperlist"
-  spec.version       = "1.1.6"
+  spec.version       = "1.1.7"
   spec.authors       = ["Geir Isene"]
   spec.email         = ["g@isene.com"]
 
@@ -28,7 +28,7 @@ Gem::Specification.new do |spec|
   spec.require_paths = ["."]
 
   # Runtime dependencies
-  spec.add_runtime_dependency "rcurses", "~> 5.1", ">= 5.1.5"
+  spec.add_runtime_dependency "rcurses", "~> 5.1", ">= 5.1.6"
   
   # Development dependencies
   spec.add_development_dependency "minitest", "~> 5.0"
