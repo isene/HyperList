@@ -2,6 +2,15 @@
 
 All notable changes to the HyperList Ruby TUI will be documented in this file.
 
+## [1.1.6] - 2025-08-14
+
+### Fixed
+- **Ruby 3.4+ Compatibility**
+  - Added explicit rcurses initialization for Ruby 3.4.0 and later
+  - Improved error handling during terminal initialization
+  - Added proper cleanup on exit for newer Ruby versions
+  - Fixed silent crashes on Arch Linux with Ruby 3.4.5
+
 ## [1.1.0] - 2025-08-13
 
 ### Added
