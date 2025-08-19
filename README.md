@@ -7,6 +7,7 @@
 [![Stay Amazing](https://img.shields.io/badge/Stay-Amazing-blue.svg)](https://isene.org)
 
 <img src="img/hyperlist_logo.svg" align="left" width="150" height="150">
+<br clear="left"/>
 
 A powerful Terminal User Interface (TUI) application for creating, editing, and managing HyperLists - a methodology for describing anything in a hierarchical, structured format.
 
