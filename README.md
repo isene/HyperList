@@ -6,7 +6,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/isene/HyperList.svg)](https://github.com/isene/HyperList/stargazers)
 [![Stay Amazing](https://img.shields.io/badge/Stay-Amazing-blue.svg)](https://isene.org)
 
-<img src="hyperlist_logo.svg" align="left" width="150" height="150">
+<img src="img/hyperlist_logo.svg" align="left" width="150" height="150">
 
 A powerful Terminal User Interface (TUI) application for creating, editing, and managing HyperLists - a methodology for describing anything in a hierarchical, structured format.
 
@@ -23,10 +23,10 @@ For historical context and the original VIM implementation, see: [hyperlist.vim]
 ## Screenshots
 
 ### Main Interface
-![HyperList Main View](screenshot_sample.png)
+![HyperList Main View](img/screenshot_sample.png)
 
 ### Help Screen
-![HyperList Help](screenshot_help.png)
+![HyperList Help](img/screenshot_help.png)
 
 ## What's New in v1.1.0
 

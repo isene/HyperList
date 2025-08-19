@@ -7,7 +7,7 @@
 # Check for help/version BEFORE loading any libraries
 if ARGV[0] == '-h' || ARGV[0] == '--help'
   puts <<~HELP
-    HyperList v1.1.7 - Terminal User Interface for HyperList files
+    HyperList v1.1.8-test1 - Terminal User Interface for HyperList files
     
     USAGE
       hyperlist [OPTIONS] [FILE]
@@ -52,7 +52,7 @@ if ARGV[0] == '-h' || ARGV[0] == '--help'
   HELP
   exit 0
 elsif ARGV[0] == '-v' || ARGV[0] == '--version'
-  puts "HyperList v1.1.7"
+  puts "HyperList v1.1.8-test1"
   exit 0
 end
 
@@ -70,7 +70,7 @@ class HyperListApp
   include Rcurses::Input
   include Rcurses::Cursor
   
-  VERSION = "1.1.7"
+  VERSION = "1.1.8-test1"
   
   def initialize(filename = nil)
     @filename = filename ? File.expand_path(filename) : nil
@@ -136,8 +136,11 @@ class HyperListApp
   end
   
   def setup_ui
-    Rcurses.clear_screen
-    Cursor.hide
+    # Only do rcurses operations if initialized
+    if defined?(Rcurses.instance_variable_get) && Rcurses.instance_variable_get(:@initialized)
+      Rcurses.clear_screen
+      Cursor.hide
+    end
     
     # Ensure we have the latest terminal size
     if IO.console
@@ -4252,6 +4255,19 @@ class HyperListApp
   end
   
   def run
+    # Initialize rcurses explicitly (no longer auto-initialized)
+    Rcurses.init!
+    
+    # Flush any buffered input (like the Enter key from running the command)
+    while IO.select([$stdin], nil, nil, 0)
+      $stdin.read_nonblock(1024) rescue break
+    end
+    
+    # Now that rcurses is initialized, set up the UI properly
+    Rcurses.clear_screen
+    Cursor.hide
+    setup_ui
+    
     render
     
     loop do
@@ -4259,6 +4275,14 @@ class HyperListApp
       check_auto_save if @auto_save_enabled
       
       c = getchr
+      
+      # Skip nil input (shouldn't happen normally)
+      next if c.nil?
+      
+      # Skip newline at the very start (buffered from command execution)
+      if c == "\n" && @last_key.nil?
+        next
+      end
       
       # Track last key for double-key combinations
       prev_key = @last_key
@@ -4550,13 +4574,15 @@ class HyperListApp
     quit
   ensure
     Cursor.show
-    Rcurses.clear_screen
+    # Screen clearing disabled for debugging
+    # Rcurses.clear_screen
   end
 end
 
 # Main
-if __FILE__ == $0
-  # Normal operation - help/version already handled at top of file
+# When installed as a gem executable, this file is loaded (not executed directly)
+# so we can't use __FILE__ == $0. Just run unless we already handled help/version.
+unless ARGV[0] == '-h' || ARGV[0] == '--help' || ARGV[0] == '-v' || ARGV[0] == '--version'
   app = HyperListApp.new(ARGV[0])
   app.run
 end
