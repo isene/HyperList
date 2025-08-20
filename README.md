@@ -29,7 +29,16 @@ For historical context and the original VIM implementation, see: [hyperlist.vim]
 ### Help Screen
 ![HyperList Help](img/screenshot_help.png)
 
-## What's New in v1.1.0
+## What's New in v1.2.0
+
+### 📝 User-Defined Templates
+- **Save as Template**: Save any HyperList document as a reusable template (`:st`)
+- **Template Manager**: List and delete your custom templates (`:lt`, `:dt`)
+- **Enhanced Template Browser**: Shows both built-in and user templates
+- **Template Metadata**: Includes description and creation date
+- Templates stored in `~/.hyperlist/templates/` for easy backup and sharing
+
+## Previous Updates (v1.1.0)
 
 ### 🔐 Encryption Support
 - **File-level encryption** for sensitive files (dot files like `.passwords.hl`)
@@ -63,7 +72,7 @@ For historical context and the original VIM implementation, see: [hyperlist.vim]
 - **Powerful Navigation**: Jump between items, references, and markers
 - **Full Editing Capabilities**: Create, edit, delete, move, and reorganize items
 - **Checkbox Support**: Multiple checkbox types with completion tracking
-- **Template System**: Jump to and fill in template markers
+- **Template System**: Built-in templates plus save/load custom templates
 - **Presentation Mode**: Focus on current item with auto-collapse
 
 ### Security Features
@@ -159,6 +168,7 @@ hyperlist file.txt          # Open any text file
 - `R` - Go to reference
 - `F` - Open file reference
 - `P` - Presentation mode (with auto-collapse)
+- `t` - Insert template (built-in or custom)
 - `?` - Help screen
 
 #### File Commands
@@ -169,6 +179,12 @@ hyperlist file.txt          # Open any text file
 - `:export html` - Export to HTML
 - `:export md` - Export to Markdown
 - `:graph` - Export to PNG
+
+#### Template Commands
+- `:st` - Save current document as template
+- `:dt` - Delete a user template
+- `:lt` - List all user templates
+- `t` - Browse and insert templates
 
 ## Examples
 

@@ -7,7 +7,7 @@
 # Check for help/version BEFORE loading any libraries
 if ARGV[0] == '-h' || ARGV[0] == '--help'
   puts <<~HELP
-    HyperList v1.1.8-test1 - Terminal User Interface for HyperList files
+    HyperList v1.2.0 - Terminal User Interface for HyperList files
     
     USAGE
       hyperlist [OPTIONS] [FILE]
@@ -52,7 +52,7 @@ if ARGV[0] == '-h' || ARGV[0] == '--help'
   HELP
   exit 0
 elsif ARGV[0] == '-v' || ARGV[0] == '--version'
-  puts "HyperList v1.1.8-test1"
+  puts "HyperList v1.2.0"
   exit 0
 end
 
@@ -64,13 +64,15 @@ require 'cgi'
 require 'openssl'
 require 'digest'
 require 'base64'
+require 'fileutils'
+require 'json'
 
 class HyperListApp
   include Rcurses
   include Rcurses::Input
   include Rcurses::Cursor
   
-  VERSION = "1.1.8-test1"
+  VERSION = "1.2.0"
   
   def initialize(filename = nil)
     @filename = filename ? File.expand_path(filename) : nil
@@ -98,6 +100,8 @@ class HyperListApp
     @auto_save_enabled = false
     @auto_save_interval = 60  # seconds
     @last_auto_save = Time.now
+    @templates_dir = File.expand_path("~/.hyperlist/templates")
+    ensure_templates_dir
     @templates = load_templates
     @macro_recording = false
     @macro_register = {}  # Store macros by key
@@ -2172,7 +2176,7 @@ class HyperListApp
     help_lines << help_line("#{"C-E".fg("10")}", "Encrypt/decrypt line", "#{"C-U".fg("10")}", "Toggle State/Trans underline")
     help_lines << help_line("#{"R".fg("10")}", "Go to reference", "#{"F".fg("10")}", "Open file")
     help_lines << help_line("#{"N".fg("10")}", "Next = marker", "#{"P".fg("10")}", "Presentation mode")
-    help_lines << help_line("#{"t".fg("10")}", "Insert template", "#{":template".fg("10")}", "Show templates")
+    help_lines << help_line("#{"t".fg("10")}", "Insert template", "#{":st".fg("10")}", "Save as template")
     help_lines << help_line("#{"Ma".fg("10")}", "Record macro 'a'", "#{"@a".fg("10")}", "Play macro 'a'")
     help_lines << help_line("#{":vsplit".fg("10")}", "Split view vertically", "#{"w".fg("10")}", "Switch panes")
     help_lines << ""
@@ -2183,6 +2187,11 @@ class HyperListApp
     help_lines << help_line("#{":graph :g".fg("10")}", "Export to PNG graph", "#{":vsplit :vs".fg("10")}", "Split view")
     help_lines << help_line("#{":as on".fg("10")}", "Enable autosave", "#{":as off".fg("10")}", "Disable autosave")
     help_lines << help_line("#{":as N".fg("10")}", "Set interval (secs)", "#{":as".fg("10")}", "Show autosave status")
+    help_lines << ""
+    help_lines << "#{"TEMPLATES".fg("14")}"
+    help_lines << help_line("#{":st".fg("10")}", "Save as template", "#{":dt".fg("10")}", "Delete template")
+    help_lines << help_line("#{":lt".fg("10")}", "List user templates", "#{"t".fg("10")}", "Insert template")
+    help_lines << ""
     help_lines << help_line("#{"q".fg("10")}", "Quit (asks to save)", "#{"Q".fg("10")}", "Force quit")
     help_lines << ""
     help_lines << "#{"COLOR SCHEME".fg("14")}"
@@ -2856,8 +2865,18 @@ class HyperListApp
     when "autosave", "as"
       status = @auto_save_enabled ? "enabled" : "disabled"
       @message = "Auto-save is #{status} (interval: #{@auto_save_interval}s)"
-    when "t"
+    when "t", "template", "templates"
       show_templates
+    when "save-template", "savetemplate", "st"
+      save_as_template
+    when /^save-template\s+(.+)/, /^savetemplate\s+(.+)/, /^st\s+(.+)/
+      save_as_template($1.strip)
+    when "delete-template", "deletetemplate", "dt"
+      delete_template
+    when /^delete-template\s+(.+)/, /^deletetemplate\s+(.+)/, /^dt\s+(.+)/
+      delete_template($1.strip)
+    when "list-templates", "listtemplates", "lt"
+      show_template_manager(:list)
     when "foldlevel"
       level = @footer.ask("Fold to level (0-9): ", "")
       if level =~ /^[0-9]$/
@@ -3205,8 +3224,13 @@ class HyperListApp
     end
   end
   
+  def ensure_templates_dir
+    FileUtils.mkdir_p(@templates_dir) unless File.exist?(@templates_dir)
+  end
+
   def load_templates
-    {
+    # Start with built-in templates
+    templates = {
       "project" => [
         {"text" => "Project: =Project Name=", "level" => 0},
         {"text" => "[_] Define project scope", "level" => 1},
@@ -3309,6 +3333,214 @@ class HyperListApp
         {"text" => "=Tips, variations, serving suggestions=", "level" => 2}
       ]
     }
+    
+    # Load user templates from templates directory
+    if File.directory?(@templates_dir)
+      Dir.glob(File.join(@templates_dir, "*.hlt")).each do |template_file|
+        template_name = File.basename(template_file, ".hlt")
+        begin
+          template_data = JSON.parse(File.read(template_file))
+          # Convert template data to the expected format
+          if template_data.is_a?(Hash) && template_data["items"]
+            templates[template_name] = template_data["items"].map do |item|
+              {"text" => item["text"], "level" => item["level"]}
+            end
+          end
+        rescue => e
+          # Skip invalid template files
+        end
+      end
+    end
+    
+    templates
+  end
+  
+  def save_as_template(name = nil)
+    # Ask for template name if not provided
+    if name.nil? || name.empty?
+      name = @footer.ask("Template name: ", "")
+      return if name.nil? || name.empty?
+    end
+    
+    # Sanitize template name
+    name = name.gsub(/[^a-zA-Z0-9_-]/, '_')
+    
+    # Ask for description
+    description = @footer.ask("Template description (optional): ", "")
+    
+    # Prepare template data
+    template_data = {
+      "name" => name,
+      "description" => description,
+      "created" => Time.now.strftime("%Y-%m-%dT%H:%M:%S"),
+      "items" => @items.map do |item|
+        {
+          "text" => item["text"],
+          "level" => item["level"]
+        }
+      end
+    }
+    
+    # Save template file
+    template_path = File.join(@templates_dir, "#{name}.hlt")
+    
+    # Check if template already exists
+    if File.exist?(template_path)
+      response = @footer.ask("Template '#{name}' already exists. Overwrite? (y/n): ", "")
+      return unless response.downcase == 'y'
+    end
+    
+    File.write(template_path, JSON.pretty_generate(template_data))
+    @message = "Template '#{name}' saved successfully"
+  end
+  
+  def delete_template(name = nil)
+    # Get list of user templates
+    user_templates = get_user_templates
+    
+    if user_templates.empty?
+      @message = "No user templates found"
+      return
+    end
+    
+    # Show template list if name not provided
+    if name.nil? || name.empty?
+      show_template_manager(:delete)
+      return
+    end
+    
+    template_path = File.join(@templates_dir, "#{name}.hlt")
+    
+    if File.exist?(template_path)
+      response = @footer.ask("Delete template '#{name}'? (y/n): ", "")
+      if response.downcase == 'y'
+        File.delete(template_path)
+        @message = "Template '#{name}' deleted"
+        # Reload templates
+        @templates = load_templates
+      end
+    else
+      @message = "Template '#{name}' not found"
+    end
+  end
+  
+  def get_user_templates
+    templates = []
+    if File.directory?(@templates_dir)
+      Dir.glob(File.join(@templates_dir, "*.hlt")).each do |template_file|
+        template_name = File.basename(template_file, ".hlt")
+        begin
+          template_data = JSON.parse(File.read(template_file))
+          templates << {
+            "name" => template_name,
+            "description" => template_data["description"] || "",
+            "created" => template_data["created"] || "",
+            "path" => template_file
+          }
+        rescue => e
+          # Skip invalid template files
+        end
+      end
+    end
+    templates.sort_by { |t| t["name"] }
+  end
+  
+  def show_template_manager(action = :list)
+    # Store original state
+    original_state = {
+      items: @items.dup,
+      current: @current,
+      offset: @offset,
+      filename: @filename,
+      modified: @modified
+    }
+    
+    user_templates = get_user_templates
+    
+    # Build template manager view
+    @items = []
+    case action
+    when :delete
+      @items << {"text" => "DELETE TEMPLATE (press Enter to delete, q to cancel)", "level" => 0, "fold" => false, "raw" => true}
+    else
+      @items << {"text" => "USER TEMPLATES (press Enter to select, q to cancel)", "level" => 0, "fold" => false, "raw" => true}
+    end
+    @items << {"text" => "="*50, "level" => 0, "fold" => false, "raw" => true}
+    
+    if user_templates.empty?
+      @items << {"text" => "No user templates found", "level" => 0, "fold" => false, "raw" => true}
+    else
+      user_templates.each_with_index do |template, idx|
+        desc = template["description"].empty? ? "No description" : template["description"]
+        created = template["created"].empty? ? "" : " (#{Time.parse(template["created"]).strftime('%Y-%m-%d')})"
+        @items << {
+          "text" => "#{idx+1}. #{template["name"]}: #{desc}#{created}",
+          "level" => 0,
+          "fold" => false,
+          "raw" => true,
+          "template_name" => template["name"],
+          "template_action" => action
+        }
+      end
+    end
+    
+    @current = 2  # Start at first template
+    @offset = 0
+    
+    selected_template = nil
+    exit_loop = false
+    
+    # Template manager loop
+    while !exit_loop
+      begin
+        render_main
+        footer_text = case action
+        when :delete
+          "Delete Template | Enter: delete | q: cancel | j/k: navigate"
+        else
+          "User Templates | Enter: select | q: cancel | j/k: navigate"
+        end
+        @footer.text = footer_text
+        @footer.refresh
+        
+        c = getchr
+        next if c.nil?
+        
+        case c
+        when "q", "ESC", "C-c", "Q"
+          exit_loop = true
+        when "j", "DOWN"
+          @current = [@current + 1, @items.length - 1].min
+        when "k", "UP"
+          @current = [@current - 1, 2].max
+        when "ENTER", "RETURN", "\n", "\r"
+          if @current >= 2 && @current < @items.length
+            item = @items[@current]
+            if item && item.is_a?(Hash) && item["template_name"]
+              selected_template = item["template_name"]
+              exit_loop = true
+            end
+          end
+        end
+      rescue => e
+        @message = "Error in template manager: #{e.message}"
+        exit_loop = true
+      end
+    end
+    
+    # Restore original state
+    @items = original_state[:items]
+    @current = original_state[:current]
+    @offset = original_state[:offset]
+    @filename = original_state[:filename]
+    @modified = original_state[:modified]
+    
+    # Process selected template
+    if selected_template && action == :delete
+      delete_template(selected_template)
+    end
+    
+    selected_template
   end
   
   def show_templates
@@ -3321,29 +3553,53 @@ class HyperListApp
       modified: @modified
     }
     
-    # Create template selection view
+    # Create template selection view combining built-in and user templates
     template_list = [
-      ["project", "Project Plan - Complete project management template"],
-      ["meeting", "Meeting Agenda - Structure for meeting notes"],
-      ["daily", "Daily Planner - Daily task and schedule template"],
-      ["checklist", "Simple Checklist - Basic checkbox list"],
-      ["brainstorm", "Brainstorming Session - Idea generation template"],
-      ["recipe", "Recipe - Cooking recipe structure"]
+      ["project", "Project Plan - Complete project management template", "built-in"],
+      ["meeting", "Meeting Agenda - Structure for meeting notes", "built-in"],
+      ["daily", "Daily Planner - Daily task and schedule template", "built-in"],
+      ["checklist", "Simple Checklist - Basic checkbox list", "built-in"],
+      ["brainstorm", "Brainstorming Session - Idea generation template", "built-in"],
+      ["recipe", "Recipe - Cooking recipe structure", "built-in"]
     ]
+    
+    # Add user templates to the list
+    user_templates = get_user_templates
+    user_templates.each do |template|
+      desc = template["description"].empty? ? "User template" : template["description"]
+      template_list << [template["name"], desc, "user"]
+    end
     
     # Build template selection items
     @items = []
     @items << {"text" => "TEMPLATES (press Enter to insert, q to cancel)", "level" => 0, "fold" => false, "raw" => true}
     @items << {"text" => "="*50, "level" => 0, "fold" => false, "raw" => true}
     
-    template_list.each_with_index do |(key, desc), idx|
+    # Add built-in templates section
+    @items << {"text" => "BUILT-IN TEMPLATES:", "level" => 0, "fold" => false, "raw" => true}
+    template_list.select { |t| t[2] == "built-in" }.each_with_index do |(key, desc, type), idx|
       @items << {
-        "text" => "#{idx+1}. #{key.capitalize}: #{desc}", 
+        "text" => "  #{idx+1}. #{key.capitalize}: #{desc}", 
         "level" => 0, 
         "fold" => false, 
         "raw" => true, 
         "template_key" => key
       }
+    end
+    
+    # Add user templates section if any exist
+    if user_templates.any?
+      @items << {"text" => "", "level" => 0, "fold" => false, "raw" => true}
+      @items << {"text" => "USER TEMPLATES:", "level" => 0, "fold" => false, "raw" => true}
+      template_list.select { |t| t[2] == "user" }.each_with_index do |(key, desc, type), idx|
+        @items << {
+          "text" => "  #{key}: #{desc}", 
+          "level" => 0, 
+          "fold" => false, 
+          "raw" => true, 
+          "template_key" => key
+        }
+      end
     end
     
     @current = 2  # Start at first template

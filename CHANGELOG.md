@@ -2,6 +2,22 @@
 
 All notable changes to the HyperList Ruby TUI will be documented in this file.
 
+## [1.2.0] - 2025-08-20
+
+### Added
+- **User-Defined Templates**
+  - Save any HyperList document as a reusable template (`:st` or `:save-template`)
+  - Template manager for listing and deleting custom templates (`:lt`, `:dt`)
+  - Enhanced template browser showing both built-in and user templates
+  - Template metadata including description and creation date
+  - Templates stored in `~/.hyperlist/templates/` for easy backup and sharing
+  - JSON format for template storage with full hierarchy preservation
+  
+### Changed
+- Template system now supports both built-in and user-created templates
+- Template browser UI improved with separate sections for built-in vs user templates
+- Help documentation updated with new template commands
+
 ## [1.1.7] - 2025-08-15
 
 ### Fixed
