@@ -7,7 +7,7 @@
 # Check for help/version BEFORE loading any libraries
 if ARGV[0] == '-h' || ARGV[0] == '--help'
   puts <<~HELP
-    HyperList v1.2.1 - Terminal User Interface for HyperList files
+    HyperList v1.2.2 - Terminal User Interface for HyperList files
     
     USAGE
       hyperlist [OPTIONS] [FILE]
@@ -52,7 +52,7 @@ if ARGV[0] == '-h' || ARGV[0] == '--help'
   HELP
   exit 0
 elsif ARGV[0] == '-v' || ARGV[0] == '--version'
-  puts "HyperList v1.2.1"
+  puts "HyperList v1.2.2"
   exit 0
 end
 
@@ -72,7 +72,7 @@ class HyperListApp
   include Rcurses::Input
   include Rcurses::Cursor
   
-  VERSION = "1.2.1"
+  VERSION = "1.2.2"
   
   def initialize(filename = nil)
     @filename = filename ? File.expand_path(filename) : nil
@@ -198,6 +198,7 @@ class HyperListApp
     @redo_position = []
     
     # Check if file is encrypted (dot file or encrypted content)
+    is_encrypted = false
     if is_encrypted_file?(file)
       if content.start_with?("ENC:")
         # Whole file is encrypted
@@ -208,7 +209,8 @@ class HyperListApp
           return
         end
         lines = decrypted_content.split("\n")
-        @message = "File decrypted successfully"
+        @message = "File decrypted successfully (folded for privacy)"
+        is_encrypted = true
       else
         # Dot file but not encrypted yet - just load normally
         lines = content.split("\n")
@@ -247,6 +249,17 @@ class HyperListApp
     end
     
     @items = [{"text" => "Empty file", "level" => 0, "fold" => false}] if @items.empty?
+    
+    # Auto-fold for privacy/security on encrypted files
+    if is_encrypted
+      @fold_level = 0  # Set fold level to 0 (everything folded)
+      # Fold all items that have children
+      @items.each_with_index do |item, idx|
+        if has_children?(idx, @items)
+          item["fold"] = true
+        end
+      end
+    end
     
     # Auto-fold deep levels for large files
     if large_file
@@ -846,6 +859,9 @@ class HyperListApp
     
     # Helper method to safely apply regexes without corrupting ANSI sequences
     def safe_regex_replace(text, pattern, &block)
+      # Ensure text is UTF-8 encoded
+      text = text.to_s.force_encoding('UTF-8')
+      
       # Find all ANSI sequences and replace with placeholders
       ansi_sequences = []
       placeholder_text = text.gsub(/\e\[[0-9;]*m/) do |match|
@@ -3168,7 +3184,10 @@ class HyperListApp
       cipher.key = key
       cipher.iv = iv
       
-      cipher.update(encrypted) + cipher.final
+      decrypted = cipher.update(encrypted) + cipher.final
+      # Force UTF-8 encoding on decrypted content
+      decrypted.force_encoding('UTF-8')
+      decrypted
     rescue => e
       @message = "Decryption failed. Wrong password?"
       nil
@@ -3217,6 +3236,9 @@ class HyperListApp
     password ||= @encryption_key || prompt_password("Enter file decryption password: ")
     return nil unless password
     
+    # Store the key for the session so line encryption can use it
+    @encryption_key = password
+    
     decrypt_string(encrypted_content, password)
   end
 
@@ -3241,13 +3263,16 @@ class HyperListApp
         end
       else
         # Encrypt the line
-        encrypted = encrypt_string(current_text)
+        # Use the existing encryption key if available (from file decryption)
+        encrypted = encrypt_string(current_text, @encryption_key)
         if encrypted
           save_undo_state
           item["text"] = encrypted
           @encrypted_lines[@current] = true
           @modified = true
-          @message = "Line encrypted"
+          @message = "Line encrypted (🔒 indicator shown)"
+          # Clear the processed cache to force re-rendering
+          @processed_cache = {}
         else
           @message = "Encryption cancelled"
         end

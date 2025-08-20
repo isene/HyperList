@@ -2,6 +2,16 @@
 
 All notable changes to the HyperList Ruby TUI will be documented in this file.
 
+## [1.2.2] - 2025-08-20
+
+### Fixed
+- Fixed encoding compatibility error when decrypting files (UTF-8 vs ASCII-8BIT)
+- Force UTF-8 encoding on decrypted content and text processing
+
+### Added
+- Auto-fold encrypted files on open for privacy (fold level 0)
+- Display "folded for privacy" message when opening encrypted files
+
 ## [1.2.1] - 2025-08-20
 
 ### Fixed
