@@ -7,7 +7,7 @@
 # Check for help/version BEFORE loading any libraries
 if ARGV[0] == '-h' || ARGV[0] == '--help'
   puts <<~HELP
-    HyperList v1.2.0 - Terminal User Interface for HyperList files
+    HyperList v1.2.1 - Terminal User Interface for HyperList files
     
     USAGE
       hyperlist [OPTIONS] [FILE]
@@ -52,7 +52,7 @@ if ARGV[0] == '-h' || ARGV[0] == '--help'
   HELP
   exit 0
 elsif ARGV[0] == '-v' || ARGV[0] == '--version'
-  puts "HyperList v1.2.0"
+  puts "HyperList v1.2.1"
   exit 0
 end
 
@@ -72,7 +72,7 @@ class HyperListApp
   include Rcurses::Input
   include Rcurses::Cursor
   
-  VERSION = "1.2.0"
+  VERSION = "1.2.1"
   
   def initialize(filename = nil)
     @filename = filename ? File.expand_path(filename) : nil
@@ -128,15 +128,16 @@ class HyperListApp
     # Debug: uncomment to see terminal size
     # puts "Terminal size: #{@rows}x#{@cols}"
     
-    # Load file if provided
+    # Setup UI first (to initialize @footer) before loading file
+    setup_ui
+    
+    # Load file if provided (after UI is set up)
     if @filename && File.exist?(@filename)
       load_file(@filename)
     else
       # Start with empty list
       @items = [{"text" => "New HyperList", "level" => 0, "fold" => false}]
     end
-    
-    setup_ui
   end
   
   def setup_ui
@@ -3107,8 +3108,24 @@ class HyperListApp
   end
 
   def encrypt_string(text, password = nil)
-    password ||= @encryption_key || prompt_password("Enter encryption password: ")
-    return nil unless password
+    if password.nil? && @encryption_key.nil?
+      # First time encrypting - ask for password twice
+      password = prompt_password("Enter encryption password: ")
+      return nil unless password
+      
+      confirm = prompt_password("Confirm encryption password: ")
+      return nil unless confirm
+      
+      if password != confirm
+        @message = "Passwords do not match - encryption cancelled"
+        return nil
+      end
+      
+      @encryption_key = password
+    else
+      password ||= @encryption_key || prompt_password("Enter encryption password: ")
+      return nil unless password
+    end
     
     # Store key for session if not already stored
     @encryption_key ||= password
@@ -3174,8 +3191,24 @@ class HyperListApp
   end
 
   def encrypt_file(content, password = nil)
-    password ||= @encryption_key || prompt_password("Enter file encryption password: ")
-    return nil unless password
+    if password.nil? && @encryption_key.nil?
+      # First time encrypting - ask for password twice
+      password = prompt_password("Enter encryption password: ")
+      return nil unless password
+      
+      confirm = prompt_password("Confirm encryption password: ")
+      return nil unless confirm
+      
+      if password != confirm
+        @message = "Passwords do not match - encryption cancelled"
+        return nil
+      end
+      
+      @encryption_key = password
+    else
+      password ||= @encryption_key || prompt_password("Enter file encryption password: ")
+      return nil unless password
+    end
     
     encrypt_string(content, password)
   end

@@ -2,6 +2,13 @@
 
 All notable changes to the HyperList Ruby TUI will be documented in this file.
 
+## [1.2.1] - 2025-08-20
+
+### Fixed
+- Fixed crash when opening encrypted dot files (footer not initialized)
+- Added password confirmation when encrypting files for the first time
+- Improved initialization order to ensure UI components are ready before file loading
+
 ## [1.2.0] - 2025-08-20
 
 ### Added
