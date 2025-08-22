@@ -4870,15 +4870,13 @@ class HyperListApp
           quit
         when "ESC", "C-C"  # ESC or Ctrl-C
           if @search && !@search.empty?
-            # Clear search on first ESC
+            # Clear search on ESC
             @search = ""
             @search_matches = []
             @message = "Search cleared"
             clear_cache
-          elsif !@modified
-            # Quit on second ESC if not modified
-            quit
           end
+          # ESC no longer quits the program - only clears search
         end
       end
       
