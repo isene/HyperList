@@ -29,18 +29,28 @@ For historical context and the original VIM implementation, see: [hyperlist.vim]
 ### Help Screen
 ![HyperList Help](img/screenshot_help.png)
 
-## What's New in v1.2.0
+## What's New in v1.2.4
 
-### 📝 User-Defined Templates
+### 🎯 Enhanced Item Movement & Editing
+- **Smart Item Movement**: `C-UP`/`C-DOWN` now move items past siblings at the same level
+- **Cursor Tracking**: Cursor follows moved items to their new position
+- **Auto-renumbering**: Numbered lists automatically renumber when items are moved or deleted
+- **Outdented Insert**: Press `A` to insert a new item one level less indented
+- **Quick Save & Quit**: Press `W` as a shortcut for `:wq`
+- **Configurable Indentation**: Press `I` to cycle between 2-5 spaces per indent level
+- **Auto-detect Indentation**: Automatically detects indentation from loaded files
+- **Global Settings**: Indentation preference saved in `~/.hyperlist/config.yml`
+
+## Previous Updates
+
+### v1.2.0 - User-Defined Templates
 - **Save as Template**: Save any HyperList document as a reusable template (`:st`)
 - **Template Manager**: List and delete your custom templates (`:lt`, `:dt`)
 - **Enhanced Template Browser**: Shows both built-in and user templates
 - **Template Metadata**: Includes description and creation date
 - Templates stored in `~/.hyperlist/templates/` for easy backup and sharing
 
-## Previous Updates (v1.1.0)
-
-### 🔐 Encryption Support
+### v1.1.0 - Encryption Support
 - **File-level encryption** for sensitive files (dot files like `.passwords.hl`)
 - **Line-level encryption** for individual items (Ctrl-E to toggle)
 - Secure AES-256-CBC encryption with PBKDF2 key derivation
@@ -150,6 +160,8 @@ hyperlist file.txt          # Open any text file
 - `o` - Insert line below
 - `O` - Insert line above
 - `a` - Insert child item
+- `A` - Insert outdented item (one level less)
+- `I` - Cycle indentation size (2-5 spaces)
 - `D` - Delete and yank line
 - `C-D` - Delete and yank item with descendants
 - `y/Y` - Copy line/tree
@@ -174,7 +186,7 @@ hyperlist file.txt          # Open any text file
 #### File Commands
 - `:w` - Save
 - `:q` - Quit
-- `:wq` - Save and quit
+- `:wq` or `W` - Save and quit
 - `:e file` - Open file
 - `:export html` - Export to HTML
 - `:export md` - Export to Markdown

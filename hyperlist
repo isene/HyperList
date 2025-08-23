@@ -117,6 +117,11 @@ class HyperListApp
     @active_pane = :main  # :main or :split
     @message_timeout = nil  # For timed message display
     
+    # Global configuration
+    @config_file = File.expand_path("~/.hyperlist/config.yml")
+    @indent_size = 2  # Default indentation (2-5 spaces)
+    load_config
+    
     # Terminal setup
     if IO.console
       @rows, @cols = IO.console.winsize
@@ -219,6 +224,9 @@ class HyperListApp
       lines = content.split("\n")
     end
     
+    # Auto-detect indentation from the file
+    detect_indentation(lines)
+    
     # Check if file is large
     large_file = lines.length > 10000
     
@@ -230,7 +238,17 @@ class HyperListApp
     # Process lines with optional progress updates for large files
     lines.each_with_index do |line, idx|
       next if line.strip.empty?
-      level = line[/^\t*/].length
+      
+      # Detect level based on leading whitespace
+      if line.start_with?("\t")
+        # Tab-based indentation
+        level = line[/^\t*/].length
+      else
+        # Space-based indentation
+        spaces = line[/^ */].length
+        level = @indent_size > 0 ? spaces / @indent_size : 0
+      end
+      
       text = line.strip
       
       # Track encrypted lines
@@ -411,7 +429,7 @@ class HyperListApp
     
     # Prepare content
     content = @items.map do |item|
-      "\t" * item["level"] + item["text"]
+      (' ' * @indent_size) * item["level"] + item["text"]
     end.join("\n")
     
     # Check if this should be an encrypted file
@@ -535,7 +553,7 @@ class HyperListApp
         lines << "## #{text}" unless text.empty?
       else
         # Use spaces for indentation in lists
-        indent = '  ' * [level - 2, 0].max
+        indent = ' ' * (@indent_size * [level - 2, 0].max)
         if text.start_with?('- [')
           lines << indent + text
         else
@@ -585,7 +603,7 @@ class HyperListApp
     @items.each do |item|
       original_text = item["text"]
       level = item["level"]
-      indent = "    " * level
+      indent = ' ' * (@indent_size * level)
       
       # Process the line
       # We'll apply formatting BEFORE escaping HTML entities
@@ -691,7 +709,7 @@ class HyperListApp
   def export_to_text
     lines = []
     @items.each do |item|
-      indent = '    ' * item["level"]  # 4 spaces per level
+      indent = ' ' * (@indent_size * item["level"])
       lines << indent + item["text"]
     end
     lines.join("\n")
@@ -724,7 +742,7 @@ class HyperListApp
     visible_items.each_with_index do |item, idx|
       next unless item
       
-      line = "    " * item["level"]  # 4 spaces per level
+      line = ' ' * (@indent_size * item["level"])
       
       # Add fold indicator
       real_idx = get_real_index(item)
@@ -1554,6 +1572,8 @@ class HyperListApp
       insert_line_with_text(@last_action)
     when :insert_child
       insert_child_with_text(@last_action)
+    when :insert_outdented
+      insert_outdented_with_text(@last_action)
     when :delete_line
       delete_line
     when :edit_line
@@ -1659,6 +1679,21 @@ class HyperListApp
     @footer.refresh
   end
   
+  def insert_outdented
+    @mode = :insert
+    
+    input = @footer.ask("New outdented item: ", "")
+    
+    if input && !input.strip.empty?
+      insert_outdented_with_text(input)
+      record_last_action(:insert_outdented, input)
+    end
+    
+    @mode = :normal
+    @footer.clear  # Clear footer immediately
+    @footer.refresh
+  end
+  
   def insert_child_with_text(text)
     return unless text && !text.strip.empty?
     
@@ -1677,6 +1712,35 @@ class HyperListApp
     end
     @modified = true
     @current += 1
+  end
+  
+  def insert_outdented_with_text(text)
+    return unless text && !text.strip.empty?
+    
+    save_undo_state  # Save state before modification
+    visible = get_visible_items
+    if @current < visible.length
+      current_level = visible[@current]["level"]
+      # Outdent means one level less, but not less than 0
+      level = [current_level - 1, 0].max
+      real_idx = get_real_index(visible[@current])
+      
+      # Find where to insert: after current item and all its descendants
+      insert_idx = real_idx + 1
+      while insert_idx < @items.length && @items[insert_idx]["level"] > current_level
+        insert_idx += 1
+      end
+      
+      @items.insert(insert_idx, {"text" => text, "level" => level, "fold" => false})
+      
+      # Update cursor to point to the new item
+      @current = get_visible_items.index { |item| item.equal?(@items[insert_idx]) } || (@current + 1)
+    else
+      # If at end of list, add at level 0
+      @items << {"text" => text, "level" => 0, "fold" => false}
+      @current = get_visible_items.length - 1
+    end
+    @modified = true
   end
   
   def edit_line
@@ -1756,9 +1820,15 @@ class HyperListApp
     end
     
     # Delete the items
+    # Remember the level of the deleted item for renumbering
+    deleted_level = item["level"]
+    
     delete_count.times { @items.delete_at(real_idx) }
     
     @items = [{"text" => "Empty", "level" => 0, "fold" => false}] if @items.empty?
+    
+    # Renumber siblings at the deleted item's level
+    renumber_siblings(deleted_level) unless @items.length == 1
     
     @current = [@current, get_visible_items.length - 1].min
     @current = 0 if @current < 0
@@ -1863,18 +1933,47 @@ class HyperListApp
       end
     end
     
+    # Find the previous sibling at the same level
+    target_level = item["level"]
+    target_idx = nil
+    
+    # Search backwards for a sibling at the same level
+    (real_idx - 1).downto(0) do |i|
+      if @items[i]["level"] == target_level
+        target_idx = i
+        break
+      elsif @items[i]["level"] < target_level
+        # Hit a parent, can't move up
+        return
+      end
+    end
+    
+    # Can't move if no sibling found
+    return if target_idx.nil?
+    
+    # Remember the first item we're moving (to track it)
+    first_moved_item = items_to_move.first
+    
     # Remove items from their current position
     items_to_move.length.times { @items.delete_at(real_idx) }
     
-    # Insert one position up (before the item that was above us)
-    target_idx = real_idx - 1
+    # Insert before the target sibling
     items_to_move.reverse.each do |item_to_move|
       @items.insert(target_idx, item_to_move)
     end
     
-    @current -= 1
+    # Update cursor position to follow the moved item
+    # The moved item is now at position target_idx in @items
+    # Find this position in the visible list
+    new_visible = get_visible_items
+    new_item_idx = new_visible.find_index { |v| v["_real_index"] == target_idx }
+    @current = new_item_idx if new_item_idx
+    
+    # Renumber siblings at the moved item's level
+    renumber_siblings(first_moved_item["level"])
+    
     @modified = true
-    @message = "Moved #{items_to_move.length} item(s) up one line"
+    @message = "Moved #{items_to_move.length} item(s) up"
     record_last_action(:move_item_up, with_children)
   end
   
@@ -1904,24 +2003,76 @@ class HyperListApp
       end
     end
     
-    # Can't move if we're already at the end
-    return if last_idx >= @items.length - 1
+    # Find the next sibling at the same level
+    target_level = item["level"]
+    target_idx = nil
+    next_sibling_end = nil
+    
+    # Search forward for a sibling at the same level
+    ((last_idx + 1)...@items.length).each do |i|
+      if @items[i]["level"] == target_level
+        # Found next sibling, now find where it ends (including its children)
+        next_sibling_end = i
+        ((i + 1)...@items.length).each do |j|
+          if @items[j]["level"] > target_level
+            next_sibling_end = j
+          else
+            break
+          end
+        end
+        target_idx = next_sibling_end + 1
+        break
+      elsif @items[i]["level"] < target_level
+        # Hit a parent level, can't move down
+        return
+      end
+    end
+    
+    # Can't move if no sibling found
+    return if target_idx.nil?
+    
+    # Remember the first item we're moving (to track it)
+    first_moved_item = items_to_move.first
     
     # Remove items from their current position
     items_to_move.length.times { @items.delete_at(real_idx) }
     
-    # Insert one position down (after the item that was below us)
-    # Since we removed items, the target position is now at real_idx + 1
-    target_idx = real_idx + 1
+    # Adjust target index since we removed items
+    target_idx -= items_to_move.length
     
+    # Insert after the target sibling and its children
     items_to_move.each_with_index do |item_to_move, idx|
       @items.insert(target_idx + idx, item_to_move)
     end
     
-    @current += 1
+    # Update cursor position to follow the moved item
+    # The moved item is now at position target_idx in @items
+    # Find this position in the visible list
+    new_visible = get_visible_items
+    new_item_idx = new_visible.find_index { |v| v["_real_index"] == target_idx }
+    @current = new_item_idx if new_item_idx
+    
+    # Renumber siblings at the moved item's level
+    renumber_siblings(first_moved_item["level"])
+    
     @modified = true
-    @message = "Moved #{items_to_move.length} item(s) down one line"
+    @message = "Moved #{items_to_move.length} item(s) down"
     record_last_action(:move_item_down, with_children)
+  end
+  
+  def renumber_siblings(changed_level)
+    # Renumber items at the specified level that start with numbers
+    current_number = 1
+    @items.each do |item|
+      if item["level"] == changed_level
+        # Check if item starts with a number pattern like "1." or "1)"
+        if item["text"] =~ /^\d+[\.\)]\s+(.+)/
+          # Replace the number with the current sequential number
+          item["text"] = "#{current_number}. #{$1}"
+          current_number += 1
+        end
+      end
+    end
   end
   
   def indent_right(with_children = true)
@@ -2179,6 +2330,8 @@ class HyperListApp
     help_lines << "#{"EDITING".fg("14")}"
     help_lines << help_line("#{"i/Enter".fg("10")}", "Edit line", "#{"o".fg("10")}", "Insert line below")
     help_lines << help_line("#{"O".fg("10")}", "Insert line above", "#{"a".fg("10")}", "Insert child")
+    help_lines << help_line("#{"A".fg("10")}", "Insert outdented", "#{"W".fg("10")}", "Save and quit")
+    help_lines << help_line("#{"I".fg("10")}", "Cycle indent (2-5)", "", "")
     help_lines << help_line("#{"D".fg("10")}", "Delete+yank line", "#{"C-D".fg("10")}", "Delete+yank item&descendants")
     help_lines << help_line("#{"y".fg("10")}" + "/".fg("10") + "#{"Y".fg("10")}", "Copy line/tree", "#{"p".fg("10")}", "Paste")
     help_lines << help_line("#{"u".fg("10")}", "Undo", "#{".".fg("10")}", "Repeat last action")
@@ -3282,6 +3435,69 @@ class HyperListApp
     end
   end
   
+  def detect_indentation(lines)
+    # Try to auto-detect indentation size from the file
+    # Find the greatest common divisor of all indentation levels
+    indents = []
+    
+    lines.each do |line|
+      next if line.strip.empty?
+      
+      # Skip tab-indented lines for space detection
+      next if line.start_with?("\t")
+      
+      # Count leading spaces
+      spaces = line[/^ */].length
+      indents << spaces if spaces > 0
+    end
+    
+    return if indents.empty?
+    
+    # Find the GCD of all indentation levels
+    gcd = indents.reduce(indents.first) { |g, n| n.gcd(g) }
+    
+    # Clamp to reasonable range (2-5)
+    if gcd >= 2 && gcd <= 5
+      @indent_size = gcd
+    elsif gcd > 5
+      # If GCD is too large, try to find a divisor between 2-5
+      [5, 4, 3, 2].each do |size|
+        if gcd % size == 0
+          @indent_size = size
+          break
+        end
+      end
+    end
+    # If we can't detect, keep the current setting
+  end
+  
+  def load_config
+    # Don't load config, let each file's indentation be detected
+    # Config is only saved when user explicitly changes with 'I'
+  end
+  
+  def save_config
+    require 'yaml'
+    config_dir = File.dirname(@config_file)
+    FileUtils.mkdir_p(config_dir) unless Dir.exist?(config_dir)
+    
+    config = {
+      'indent_size' => @indent_size
+    }
+    
+    File.write(@config_file, config.to_yaml)
+  rescue => e
+    @message = "Failed to save config: #{e.message}"
+  end
+  
+  def cycle_indent_size
+    @indent_size = (@indent_size % 5) + 1  # Cycles through 1,2,3,4,5
+    @indent_size = 2 if @indent_size < 2  # Ensure minimum of 2
+    save_config
+    @message = "Indentation set to #{@indent_size} spaces"
+    @modified = true  # Mark as modified since display will change
+  end
+  
   def ensure_templates_dir
     FileUtils.mkdir_p(@templates_dir) unless File.exist?(@templates_dir)
   end
@@ -3839,6 +4055,8 @@ class HyperListApp
       insert_line_above
     when "a"
       insert_child
+    when "A"
+      insert_outdented
     when "d"
       # Check if it's dd
       if getchr == "d"
@@ -4728,6 +4946,21 @@ class HyperListApp
           @current += 1
         when "a"
           insert_child
+        when "A"
+          insert_outdented
+        when "W"
+          # Save and quit (shortcut for :wq)
+          if @filename
+            save_file
+          else
+            filename_input = @footer.ask("Save as: ", "")
+            @filename = File.expand_path(filename_input) if filename_input && !filename_input.empty?
+            save_file if @filename && !@filename.empty?
+          end
+          quit if @filename
+        when "I"
+          # Cycle through indentation sizes (2-5 spaces)
+          cycle_indent_size
         when "t"
           show_templates
         when "D"  # Delete line (with children)
