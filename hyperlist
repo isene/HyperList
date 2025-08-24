@@ -783,13 +783,16 @@ class HyperListApp
         end
       end
       
-      # Apply current item highlighting
+      # Apply current item highlighting (but not in presentation mode for focused items)
       if idx == @current
-        bg_color = (!@split_view || @active_pane == :main) ? "237" : "234"
-        if bg_color
-          bg_code = "\e[48;5;#{bg_color}m"
-          reset_bg = "\e[49m"
-          line = bg_code + line.gsub(/\e\[49m/, '') + reset_bg
+        # Skip background highlighting in presentation mode for items in focus
+        if !(@presentation_mode && is_item_in_presentation_focus?(item))
+          bg_color = (!@split_view || @active_pane == :main) ? "237" : "234"
+          if bg_color
+            bg_code = "\e[48;5;#{bg_color}m"
+            reset_bg = "\e[49m"
+            line = bg_code + line.gsub(/\e\[49m/, '') + reset_bg
+          end
         end
       end
       
@@ -2314,10 +2317,12 @@ class HyperListApp
     help_lines << help_line("#{"h".fg("10")}", "Go to parent", "#{"l".fg("10")}", "Go to first child")
     help_lines << help_line("#{"PgUp".fg("10")}", "Page up", "#{"PgDn".fg("10")}", "Page down")
     help_lines << help_line("#{"g/Home".fg("10")}", "Go to top", "#{"G/End".fg("10")}", "Go to bottom")
-    help_lines << help_line("#{"/".fg("10")}", "Search", "#{"n".fg("10")}", "Next match")
-    help_lines << help_line("#{"?".fg("10")}", "This help", "#{"??".fg("10")}", "Full documentation")
+    help_lines << help_line("#{"R".fg("10")}", "Jump to reference", "#{"F".fg("10")}", "Open file/URL")
     help_lines << help_line("#{"ma".fg("10")}", "Set mark 'a'", "#{"'a".fg("10")}", "Jump to mark 'a'")
     help_lines << help_line("#{"''".fg("10")}", "Jump to prev position", "#{"N".fg("10")}", "Next = template marker")
+    help_lines << ""
+    help_lines << "#{"SEARCH".fg("14")}"
+    help_lines << help_line("#{"/".fg("10")}", "Search forward", "#{"n".fg("10")}", "Next match")
     help_lines << ""
     help_lines << "#{"FOLDING".fg("14")}"
     help_lines << help_line("#{"Space".fg("10")}", "Toggle fold", "#{"za".fg("10")}", "Toggle all folds")
@@ -2341,14 +2346,11 @@ class HyperListApp
     help_lines << help_line("#{"Tab".fg("10")}", "Indent item+kids", "#{"S-Tab".fg("10")}", "Unindent item+kids")
     help_lines << help_line("#{"→".fg("10")}", "Indent item only", "#{"←".fg("10")}", "Unindent item only")
     help_lines << ""
-    help_lines << "#{"FEATURES".fg("14")}"
+    help_lines << "#{"SPECIAL FEATURES".fg("14")}"
     help_lines << help_line("#{"v".fg("10")}", "Toggle checkbox", "#{"V".fg("10")}", "Checkbox with date")
     help_lines << help_line("#{"C-E".fg("10")}", "Encrypt/decrypt line", "#{"C-U".fg("10")}", "Toggle State/Trans underline")
-    help_lines << help_line("#{"R".fg("10")}", "Go to reference", "#{"F".fg("10")}", "Open file")
-    help_lines << help_line("#{"N".fg("10")}", "Next = marker", "#{"P".fg("10")}", "Presentation mode")
-    help_lines << help_line("#{"t".fg("10")}", "Insert template", "#{":st".fg("10")}", "Save as template")
+    help_lines << help_line("#{"P".fg("10")}", "Presentation mode", "#{"w".fg("10")}", "Switch panes (split view)")
     help_lines << help_line("#{"Ma".fg("10")}", "Record macro 'a'", "#{"@a".fg("10")}", "Play macro 'a'")
-    help_lines << help_line("#{":vsplit".fg("10")}", "Split view vertically", "#{"w".fg("10")}", "Switch panes")
     help_lines << ""
     help_lines << "#{"FILE OPERATIONS".fg("14")}"
     help_lines << help_line("#{":w".fg("10")}", "Save", "#{":q".fg("10")}", "Quit")
@@ -2359,9 +2361,11 @@ class HyperListApp
     help_lines << help_line("#{":as N".fg("10")}", "Set interval (secs)", "#{":as".fg("10")}", "Show autosave status")
     help_lines << ""
     help_lines << "#{"TEMPLATES".fg("14")}"
-    help_lines << help_line("#{":st".fg("10")}", "Save as template", "#{":dt".fg("10")}", "Delete template")
-    help_lines << help_line("#{":lt".fg("10")}", "List user templates", "#{"t".fg("10")}", "Insert template")
+    help_lines << help_line("#{"t".fg("10")}", "Insert template", "#{":st".fg("10")}", "Save as template")
+    help_lines << help_line("#{":dt".fg("10")}", "Delete template", "#{":lt".fg("10")}", "List user templates")
     help_lines << ""
+    help_lines << "#{"HELP & QUIT".fg("14")}"
+    help_lines << help_line("#{"?".fg("10")}", "This help", "#{"??".fg("10")}", "Full documentation")
     help_lines << help_line("#{"q".fg("10")}", "Quit (asks to save)", "#{"Q".fg("10")}", "Force quit")
     help_lines << ""
     help_lines << "#{"COLOR SCHEME".fg("14")}"
