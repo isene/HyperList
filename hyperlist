@@ -1357,6 +1357,44 @@ class HyperListApp
     end
   end
   
+  def jump_to_next_sibling
+    visible = get_visible_items
+    return if @current >= visible.length - 1
+    
+    current_level = visible[@current]["level"]
+    
+    # Search forward for the next item at the same level
+    (@current + 1...visible.length).each do |i|
+      if visible[i]["level"] == current_level
+        @current = i
+        update_presentation_focus if @presentation_mode
+        return
+      elsif visible[i]["level"] < current_level
+        # We've gone up a level, no more siblings
+        return
+      end
+    end
+  end
+  
+  def jump_to_prev_sibling
+    visible = get_visible_items
+    return if @current <= 0
+    
+    current_level = visible[@current]["level"]
+    
+    # Search backward for the previous item at the same level
+    (@current - 1).downto(0) do |i|
+      if visible[i]["level"] == current_level
+        @current = i
+        update_presentation_focus if @presentation_mode
+        return
+      elsif visible[i]["level"] < current_level
+        # We've gone up a level, no more siblings before this
+        return
+      end
+    end
+  end
+  
   def expand_to_level(level)
     @items.each do |item|
       item["fold"] = item["level"] >= level
@@ -1447,9 +1485,11 @@ class HyperListApp
       item["presentation_focus"] = false
     end
     
-    # Mark current item as in focus and unfold it
-    current_item["presentation_focus"] = true
-    current_item["fold"] = false
+    # Mark current item as in focus and unfold it in the main items array
+    if current_real_idx && current_real_idx < @items.length
+      @items[current_real_idx]["presentation_focus"] = true
+      @items[current_real_idx]["fold"] = false
+    end
     
     # Unfold all ancestors of current item
     ancestor_indices = []
@@ -2349,8 +2389,9 @@ class HyperListApp
     help_lines << "#{"SPECIAL FEATURES".fg("14")}"
     help_lines << help_line("#{"v".fg("10")}", "Toggle checkbox", "#{"V".fg("10")}", "Checkbox with date")
     help_lines << help_line("#{"C-E".fg("10")}", "Encrypt/decrypt line", "#{"C-U".fg("10")}", "Toggle State/Trans underline")
-    help_lines << help_line("#{"P".fg("10")}", "Presentation mode", "#{"w".fg("10")}", "Switch panes (split view)")
+    help_lines << help_line("#{"P".fg("10")}", "Presentation mode", "#{"Tab/S-Tab".fg("10")}", "Next/prev sibling (in P)")
     help_lines << help_line("#{"Ma".fg("10")}", "Record macro 'a'", "#{"@a".fg("10")}", "Play macro 'a'")
+    help_lines << help_line("#{"w".fg("10")}", "Switch panes (split view)", "", "")
     help_lines << ""
     help_lines << "#{"FILE OPERATIONS".fg("14")}"
     help_lines << help_line("#{":w".fg("10")}", "Save", "#{":q".fg("10")}", "Quit")
@@ -4990,18 +5031,28 @@ class HyperListApp
         when "C-K"  # Alternative: Move item and descendants up (for terminals that intercept C-UP)
           move_item_up(true)
         when "TAB"
-          # Indent with all children
-          if @split_view && @active_pane == :split
-            indent_split_right(true)
+          if @presentation_mode
+            # In presentation mode, Tab goes to next sibling
+            jump_to_next_sibling
           else
-            indent_right(true)
+            # Normal mode: Indent with all children
+            if @split_view && @active_pane == :split
+              indent_split_right(true)
+            else
+              indent_right(true)
+            end
           end
         when "S-TAB"  # Shift-Tab
-          # Unindent with all children
-          if @split_view && @active_pane == :split
-            indent_split_left(true)
+          if @presentation_mode
+            # In presentation mode, Shift-Tab goes to previous sibling
+            jump_to_prev_sibling
           else
-            indent_left(true)
+            # Normal mode: Unindent with all children
+            if @split_view && @active_pane == :split
+              indent_split_left(true)
+            else
+              indent_left(true)
+            end
           end
         when "u"
           undo
