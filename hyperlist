@@ -1990,16 +1990,9 @@ class HyperListApp
         end
       end
     else
-      # For single line delete, check if it has children (D always deletes with children)
+      # For single line delete (D key - delete only the current line)
       @clipboard_is_tree = false  # Mark as single/adaptive for paste behavior
-      ((real_idx + 1)...@items.length).each do |i|
-        if @items[i]["level"] > level
-          @clipboard << @items[i].dup
-          delete_count += 1
-        else
-          break
-        end
-      end
+      # Don't include children - delete_count stays at 1
     end
     
     # Delete the items
@@ -5148,8 +5141,8 @@ class HyperListApp
           cycle_indent_size
         when "t"
           show_templates
-        when "D"  # Delete line (with children)
-          delete_line(false)  # D always deletes with children by default
+        when "D"  # Delete line only (without children)
+          delete_line(false)  # Delete current line only
         when "C-D"  # Delete line and all descendants explicitly
           delete_line(true)
         when "C-E"  # Toggle line encryption
