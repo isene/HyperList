@@ -7,7 +7,7 @@
 # Check for help/version BEFORE loading any libraries
 if ARGV[0] == '-h' || ARGV[0] == '--help'
   puts <<~HELP
-    HyperList v1.2.3 - Terminal User Interface for HyperList files
+    HyperList v1.3.0 - Terminal User Interface for HyperList files
     
     USAGE
       hyperlist [OPTIONS] [FILE]
@@ -52,7 +52,7 @@ if ARGV[0] == '-h' || ARGV[0] == '--help'
   HELP
   exit 0
 elsif ARGV[0] == '-v' || ARGV[0] == '--version'
-  puts "HyperList v1.2.3"
+  puts "HyperList v1.3.0"
   exit 0
 end
 
@@ -72,7 +72,7 @@ class HyperListApp
   include Rcurses::Input
   include Rcurses::Cursor
   
-  VERSION = "1.2.3"
+  VERSION = "1.3.0"
   
   def initialize(filename = nil)
     @filename = filename ? File.expand_path(filename) : nil
@@ -85,6 +85,7 @@ class HyperListApp
     @search = ""
     @search_matches = []  # Track search match positions
     @fold_level = 99
+    @config_line = nil  # Store config line from file
     @clipboard = nil
     @undo_stack = []
     @undo_position = []  # Stack of cursor positions for undo
@@ -192,6 +193,7 @@ class HyperListApp
   def load_file(file)
     @items = []
     @encrypted_lines = {}
+    @config_line = nil  # Store config line to preserve when saving
     
     # Read file content
     content = File.read(file) rescue ""
@@ -201,6 +203,9 @@ class HyperListApp
     @undo_position = []
     @redo_stack = []
     @redo_position = []
+    
+    # Parse config line if present (before processing content)
+    parse_config_line(content)
     
     # Check if file is encrypted (dot file or encrypted content)
     is_encrypted = false
@@ -238,6 +243,11 @@ class HyperListApp
     # Process lines with optional progress updates for large files
     lines.each_with_index do |line, idx|
       next if line.strip.empty?
+      
+      # Skip config lines (don't add them to items)
+      if line =~ /^#\s*(hyperlist|hl):\s*/
+        next
+      end
       
       # Detect level based on leading whitespace
       if line.start_with?("\t")
@@ -285,6 +295,11 @@ class HyperListApp
       @message = "Large file loaded. Deep levels auto-folded for performance."
     end
     
+    # Apply configured fold level if set (after items are loaded)
+    if @config_fold_level && !is_encrypted  # Don't override encrypted file folding
+      apply_fold_level(@config_fold_level)
+    end
+    
     # Update recent files list
     add_to_recent_files(File.expand_path(file)) if file
   end
@@ -294,6 +309,107 @@ class HyperListApp
       if item["level"] >= max_level && has_children?(idx, @items)
         item["fold"] = true
       end
+    end
+  end
+  
+  def apply_fold_level(level)
+    # Apply fold level: 0 = all folded, 99 = all open
+    # Fold items at levels greater than specified level
+    @items.each_with_index do |item, idx|
+      if has_children?(idx, @items)
+        item["fold"] = item["level"] >= level
+      end
+    end
+    
+    # Special cases
+    if level == 0
+      # Fold everything that has children
+      @items.each_with_index do |item, idx|
+        item["fold"] = true if has_children?(idx, @items)
+      end
+    elsif level >= 99
+      # Unfold everything
+      @items.each { |item| item["fold"] = false }
+    end
+  end
+  
+  def parse_config_line(content)
+    # Look for config line at the bottom of the file
+    # Format: # hyperlist: option1=value option2=value
+    # Or: # hl: option1=value option2=value
+    lines = content.split("\n")
+    
+    # Check last 5 lines for config (in case there are empty lines)
+    config_line = nil
+    lines.last(5).each do |line|
+      if line =~ /^#\s*(hyperlist|hl):\s*(.+)$/
+        @config_line = line  # Store the full line to preserve when saving
+        config_line = $2
+        break
+      end
+    end
+    
+    return unless config_line
+    
+    # Parse options
+    config_options = {}
+    config_line.scan(/(\w+)=([^\s]+)/).each do |key, value|
+      # Convert values to appropriate types
+      case key
+      when "fold_level", "auto_save_interval", "tab_width"
+        config_options[key] = value.to_i
+      when "auto_save", "wrap", "show_numbers", "highlight_current", "checkbox_date", "backup", "encrypt"
+        config_options[key] = value.downcase == "true"
+      else
+        config_options[key] = value
+      end
+    end
+    
+    # Apply config options
+    apply_config(config_options)
+  end
+  
+  def apply_config(options)
+    # Apply configuration options from config line
+    options.each do |key, value|
+      case key
+      when "fold_level"
+        @fold_level = value if value >= 0 && value <= 99
+        @config_fold_level = value  # Store for application after items are loaded
+      when "auto_save"
+        @auto_save_enabled = value
+      when "auto_save_interval"
+        @auto_save_interval = value if value > 0
+      when "tab_width", "indent_size"
+        @indent_size = value if value >= 2 && value <= 8
+      when "presentation_mode", "presentation"
+        @presentation_mode = value
+        setup_ui if value  # Refresh UI if entering presentation mode
+      when "default_view"
+        case value
+        when "split"
+          @split_view = true
+          setup_ui
+        when "presentation"
+          @presentation_mode = true
+          setup_ui
+        end
+      when "theme"
+        # Could implement theme switching here
+        @theme = value
+      when "search_case"
+        @search_case = value  # sensitive/insensitive/smart
+      when "backup"
+        @backup_enabled = value
+      when "encrypt"
+        # Handle encryption enabling (would need password prompt)
+        @encrypt_enabled = value
+      end
+    end
+    
+    # Show message about applied config
+    if options.any?
+      @message = "Applied config: #{options.map{|k,v| "#{k}=#{v}"}.join(' ')}"
     end
   end
   
@@ -431,6 +547,11 @@ class HyperListApp
     content = @items.map do |item|
       (' ' * @indent_size) * item["level"] + item["text"]
     end.join("\n")
+    
+    # Append config line if present
+    if @config_line
+      content += "\n\n" + @config_line
+    end
     
     # Check if this should be an encrypted file
     if is_encrypted_file?(@filename) && !content.empty?

@@ -2,6 +2,51 @@
 
 All notable changes to the HyperList Ruby TUI will be documented in this file.
 
+## [1.3.0] - 2025-08-28
+
+### Added
+- **Configuration Lines** (similar to vim modelines)
+  - Add configuration options at the bottom of HyperList files
+  - Format: `# hyperlist: option1=value option2=value` or `# hl: option1=value`
+  - Supported options:
+    - `fold_level` - Default fold level (0=all closed, 99=all open)
+    - `auto_save` - Enable/disable auto-save (true/false)
+    - `auto_save_interval` - Seconds between auto-saves
+    - `tab_width`/`indent_size` - Spaces per indentation level (2-8)
+    - `presentation_mode` - Start in presentation mode (true/false)
+    - `default_view` - Start in specific view (normal/presentation/split)
+  - Configuration lines are preserved when saving
+  - Configuration lines are hidden from the displayed items
+  - Applied configuration is shown in status message on file load
+
+## [1.2.7] - 2025-08-27
+
+### Fixed
+- Fixed 'D' key to delete only the current line, not from cursor to end of file
+
+## [1.2.6] - 2025-08-26
+
+### Fixed
+- Fixed presentation mode navigation issues
+- Corrected presentation mode footer display
+
+## [1.2.5] - 2025-08-25
+
+### Enhanced
+- Improved presentation mode with better focus
+- Reorganized help page for better readability
+
+## [1.2.4] - 2025-08-24
+
+### Enhanced
+- Enhanced item movement and indentation
+- Improved editing capabilities
+
+## [1.2.3] - 2025-08-23
+
+### Fixed
+- Various bug fixes and improvements
+
 ## [1.2.2] - 2025-08-20
 
 ### Fixed
