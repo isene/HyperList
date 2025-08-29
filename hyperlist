@@ -2854,11 +2854,13 @@ class HyperListApp
     help_lines << help_line("#{":dt".fg("10")}", "Delete template", "#{":lt".fg("10")}", "List user templates")
     help_lines << ""
     
-    # CONFIGURATION section removed - was causing crashes
-    # help_lines << "#{"CONFIGURATION".fg("14")}"
-    # help_lines << help_line("#{":set".fg("10")}", "Show all settings", "#{":set option".fg("10")}", "Show option value")
-    # help_lines << help_line("#{":set option=val".fg("10")}", "Set option")
-    # help_lines << ""
+    help_lines << "#{"CONFIGURATION".fg("14")}"
+    help_lines << help_line("#{":set".fg("10")}", "Show all settings")
+    help_lines << help_line("#{":set opt".fg("10")}", "Show option value")  
+    help_lines << help_line("#{":set opt=val".fg("10")}", "Set option value")
+    help_lines << help_line("#{"Options:".fg("245")}", "theme, wrap, fold_level")
+    help_lines << help_line("#{"".fg("245")}", "show_numbers, tab_width")
+    help_lines << ""
     
     help_lines << "#{"HELP & QUIT".fg("14")}"
     help_lines << help_line("#{"?".fg("10")}", "This help", "#{"??".fg("10")}", "Full documentation")
