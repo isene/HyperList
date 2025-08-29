@@ -2856,8 +2856,8 @@ class HyperListApp
     
     help_lines << "#{"CONFIGURATION".fg("14")}"
     help_lines << help_line("#{":set".fg("10")}", "Show all settings")
-    help_lines << help_line("#{":set opt".fg("10")}", "Show option value")  
-    help_lines << help_line("#{":set opt=val".fg("10")}", "Set option value")
+    help_lines << help_line("#{":set o".fg("10")}", "Show option value")  
+    help_lines << help_line("#{":set o=val".fg("10")}", "Set option value")
     help_lines << help_line("#{"Options:".fg("245")}", "theme, wrap, fold_level")
     help_lines << help_line("#{"".fg("245")}", "show_numbers, tab_width")
     help_lines << ""
