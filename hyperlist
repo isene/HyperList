@@ -7,7 +7,7 @@
 # Check for help/version BEFORE loading any libraries
 if ARGV[0] == '-h' || ARGV[0] == '--help'
   puts <<~HELP
-    HyperList v1.4.1 - Terminal User Interface for HyperList files
+    HyperList v1.4.2 - Terminal User Interface for HyperList files
     
     USAGE
       hyperlist [OPTIONS] [FILE]
@@ -72,7 +72,7 @@ class HyperListApp
   include Rcurses::Input
   include Rcurses::Cursor
   
-  VERSION = "1.4.1"
+  VERSION = "1.4.2"
   
   def initialize(filename = nil)
     @filename = filename ? File.expand_path(filename) : nil

@@ -2,6 +2,20 @@
 
 All notable changes to the HyperList Ruby TUI will be documented in this file.
 
+## [1.4.2] - 2025-08-29
+
+### Fixed
+- **Help screen improvements**
+  - Fixed help screen crash issue with CONFIGURATION section
+  - Improved alignment of :set commands in help
+  - Added working CONFIGURATION section with proper formatting
+  
+### Changed
+- **Code cleanup**
+  - Removed debug logging code
+  - Cleaned up unused variables
+  - Improved code consistency
+
 ## [1.4.1] - 2025-08-29
 
 ### Fixed
