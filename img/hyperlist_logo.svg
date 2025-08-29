@@ -1,77 +1,401 @@
 <?xml version="1.0" encoding="UTF-8" standalone="no"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
-  <defs>
-    <!-- Terminal glow effect -->
-    <filter id="glow">
-      <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
-      <feMerge>
-        <feMergeNode in="coloredBlur"/>
-        <feMergeNode in="SourceGraphic"/>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   width="134.72328mm"
+   height="134.55478mm"
+   viewBox="0 0 134.72328 134.55478"
+   version="1.1"
+   id="svg1"
+   xml:space="preserve"
+   sodipodi:docname="hyperlistlogo.svg"
+   inkscape:version="1.4.2 (ebf0e940d0, 2025-05-08)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg"><sodipodi:namedview
+   id="namedview1"
+   pagecolor="#ffffff"
+   bordercolor="#000000"
+   borderopacity="0.25"
+   inkscape:showpageshadow="2"
+   inkscape:pageopacity="0.0"
+   inkscape:pagecheckerboard="0"
+   inkscape:deskcolor="#d1d1d1"
+   inkscape:document-units="mm"
+   inkscape:zoom="1.332716"
+   inkscape:cx="231.85734"
+   inkscape:cy="219.10144"
+   inkscape:window-width="1920"
+   inkscape:window-height="951"
+   inkscape:window-x="0"
+   inkscape:window-y="29"
+   inkscape:window-maximized="1"
+   inkscape:current-layer="svg1" />
+  <defs
+   id="defs1">
+    <linearGradient
+   id="linearGradient33"
+   x1="0"
+   y1="0"
+   x2="1"
+   y2="1">
+      <stop
+   offset="0"
+   style="stop-color:#00fa86;stop-opacity:1;"
+   id="stop32" />
+      <stop
+   offset="1"
+   style="stop-color:#00cc66;stop-opacity:1"
+   id="stop33" />
+    </linearGradient>
+    <filter
+   id="glow"
+   x="-1.184409"
+   y="-2.3688181"
+   width="3.3688181"
+   height="5.7376362">
+      <feGaussianBlur
+   stdDeviation="2.9610226"
+   result="coloredBlur"
+   id="feGaussianBlur1" />
+      <feMerge
+   id="feMerge2">
+        <feMergeNode
+   in="coloredBlur"
+   id="feMergeNode1" />
+        <feMergeNode
+   in="SourceGraphic"
+   id="feMergeNode2" />
       </feMerge>
     </filter>
-    <!-- Gradient for depth -->
-    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#00ff88;stop-opacity:1" />
-      <stop offset="100%" style="stop-color:#00cc66;stop-opacity:1" />
+    <linearGradient
+   id="grad"
+   x1="0"
+   y1="0"
+   x2="1"
+   y2="1">
+      <stop
+   offset="0%"
+   style="stop-color:#00ff88;stop-opacity:1"
+   id="stop2" />
+      <stop
+   offset="100%"
+   style="stop-color:#00cc66;stop-opacity:1"
+   id="stop3" />
     </linearGradient>
+    <filter
+   style="color-interpolation-filters:sRGB"
+   id="filter6"
+   x="-0.39473927"
+   y="-0.17425425"
+   width="1.7894785"
+   height="1.3485085">
+      <feGaussianBlur
+   stdDeviation="0.4 0.4"
+   result="fbSourceGraphic"
+   id="feGaussianBlur6" />
+      <feColorMatrix
+   result="fbSourceGraphicAlpha"
+   in="fbSourceGraphic"
+   values="0 0 0 -1 0 0 0 0 -1 0 0 0 0 -1 0 0 0 0 1 0"
+   id="feColorMatrix8" />
+      <feGaussianBlur
+   id="feGaussianBlur8"
+   stdDeviation="0.4 0.4"
+   result="blur"
+   in="fbSourceGraphic" />
+    </filter>
+    <filter
+   style="color-interpolation-filters:sRGB"
+   id="filter22"
+   x="-0.0064666744"
+   y="-0.45590055"
+   width="1.0129333"
+   height="1.9118011">
+      <feGaussianBlur
+   stdDeviation="0.01 0.1"
+   result="blur"
+   id="feGaussianBlur22" />
+    </filter>
+    <filter
+   style="color-interpolation-filters:sRGB"
+   id="filter23"
+   x="-0.00056465436"
+   y="-0.20969008"
+   width="1.0011293"
+   height="1.4193802">
+      <feGaussianBlur
+   stdDeviation="0.01 0.11"
+   result="blur"
+   id="feGaussianBlur23" />
+    </filter>
+    <filter
+   id="filter28"
+   x="-0.040088417"
+   y="-0.21380489"
+   width="1.0801768"
+   height="1.4276098">
+      <feGaussianBlur
+   stdDeviation="2.1380488"
+   result="coloredBlur"
+   id="feGaussianBlur27" />
+      <feMerge
+   id="feMerge28">
+        <feMergeNode
+   in="coloredBlur"
+   id="feMergeNode27" />
+        <feMergeNode
+   in="SourceGraphic"
+   id="feMergeNode28" />
+      </feMerge>
+    </filter>
+    <filter
+   id="filter35"
+   x="-0.40035462"
+   y="-0.048042555"
+   width="1.8007092"
+   height="1.0960851">
+      <feGaussianBlur
+   stdDeviation="4.003546"
+   result="coloredBlur"
+   id="feGaussianBlur34" />
+      <feMerge
+   id="feMerge35">
+        <feMergeNode
+   in="coloredBlur"
+   id="feMergeNode34" />
+        <feMergeNode
+   in="SourceGraphic"
+   id="feMergeNode35" />
+      </feMerge>
+    </filter>
+    <filter
+   style="color-interpolation-filters:sRGB"
+   id="filter36"
+   x="-0.092322366"
+   y="-0.059838278"
+   width="1.1846447"
+   height="1.1196766">
+      <feGaussianBlur
+   stdDeviation="0.25392894"
+   id="feGaussianBlur36" />
+    </filter>
   </defs>
-
-  <!-- Dark terminal background -->
-  <rect width="512" height="512" fill="#0d1117"/>
-  
-  <!-- Terminal frame with rounded corners -->
-  <rect x="32" y="32" width="448" height="448" rx="16" ry="16" 
-        fill="none" stroke="#00ff88" stroke-width="3" opacity="0.8"/>
-  
-  <!-- Terminal header bar -->
-  <rect x="32" y="32" width="448" height="40" rx="16" ry="16" fill="#161b22"/>
-  <circle cx="56" cy="52" r="6" fill="#ff5f56"/>
-  <circle cx="76" cy="52" r="6" fill="#ffbd2e"/>
-  <circle cx="96" cy="52" r="6" fill="#27c93f"/>
-  
-  <!-- Main HyperList logo design -->
-  <g filter="url(#glow)">
-    <!-- Large H that forms into list structure -->
-    <!-- Left vertical of H -->
-    <rect x="96" y="120" width="24" height="200" fill="url(#grad)"/>
-    <!-- Right vertical of H -->
-    <rect x="200" y="120" width="24" height="200" fill="url(#grad)"/>
-    <!-- Horizontal crossbar of H -->
-    <rect x="96" y="208" width="128" height="24" fill="url(#grad)"/>
-    
-    <!-- List items branching from H -->
-    <!-- Main branch -->
-    <rect x="224" y="208" width="160" height="4" fill="#00ff88" opacity="0.8"/>
-    
-    <!-- List item 1 -->
-    <rect x="260" y="160" width="8" height="8" fill="#00ff88"/>
-    <rect x="276" y="162" width="100" height="4" fill="#00ff88" opacity="0.6"/>
-    
-    <!-- List item 2 with checkbox -->
-    <rect x="260" y="190" width="12" height="12" fill="none" stroke="#00ff88" stroke-width="2"/>
-    <polyline points="263,196 266,199 270,193" stroke="#00ff88" stroke-width="2" fill="none"/>
-    <rect x="280" y="194" width="96" height="4" fill="#00ff88" opacity="0.6"/>
-    
-    <!-- List item 3 -->
-    <rect x="260" y="220" width="8" height="8" fill="#00ff88"/>
-    <rect x="276" y="222" width="100" height="4" fill="#00ff88" opacity="0.6"/>
-    
-    <!-- Nested item -->
-    <rect x="288" y="250" width="6" height="6" fill="#00cc66"/>
-    <rect x="300" y="251" width="76" height="3" fill="#00cc66" opacity="0.5"/>
-    
-    <!-- List item 4 -->
-    <rect x="260" y="280" width="8" height="8" fill="#00ff88"/>
-    <rect x="276" y="282" width="100" height="4" fill="#00ff88" opacity="0.6"/>
-    
-    <!-- Terminal cursor blink -->
-    <rect x="384" y="280" width="16" height="24" fill="#00ff88">
-      <animate attributeName="opacity" values="1;0;1" dur="1s" repeatCount="indefinite"/>
-    </rect>
-  </g>
-  
-  <!-- Subtle terminal prompt at bottom -->
-  <text x="96" y="380" font-family="monospace" font-size="14" fill="#00ff88" opacity="0.4">
-    hyperlist v1.0.0 $
-  </text>
+  <rect
+   width="135.46666"
+   height="135.46666"
+   fill="#0d1117"
+   id="rect3"
+   x="-0.15747385"
+   y="-0.34253129"
+   style="stroke-width:0.264583" />
+  <rect
+   x="8.3091898"
+   y="8.124136"
+   width="118.27769"
+   height="10.583333"
+   rx="4.2242026"
+   ry="4.2333331"
+   fill="#161b22"
+   id="rect5"
+   style="stroke-width:0.264298" />
+  <rect
+   x="8.3091898"
+   y="8.124136"
+   width="118.53333"
+   height="118.53333"
+   rx="4.2333331"
+   ry="4.2333331"
+   fill="none"
+   stroke="#00ff88"
+   stroke-width="0.79375"
+   opacity="0.8"
+   id="rect4" />
+  <circle
+   cx="14.659192"
+   cy="13.4158"
+   fill="#ff5f56"
+   id="circle5"
+   style="stroke-width:0.264583"
+   r="1.5875" />
+  <circle
+   cx="19.950855"
+   cy="13.4158"
+   fill="#ffbd2e"
+   id="circle6"
+   style="stroke-width:0.264583"
+   r="1.5875" />
+  <circle
+   cx="25.242527"
+   cy="13.4158"
+   fill="#27c93f"
+   id="circle7"
+   style="stroke-width:0.264583"
+   r="1.5875" />
+  <rect
+   x="96"
+   y="120"
+   width="24"
+   height="200"
+   fill="url(#grad)"
+   id="rect7"
+   style="fill:#00e878;fill-opacity:1;filter:url(#glow)"
+   transform="matrix(0.26458333,0,0,0.26458333,-0.15747435,-0.3425329)" />
+  <rect
+   x="200"
+   y="120"
+   width="24"
+   height="200"
+   fill="url(#grad)"
+   id="rect8"
+   style="fill:#00e979;fill-opacity:1;filter:url(#filter35)"
+   transform="matrix(0.26458333,0,0,0.26458333,-0.15747435,-0.3425329)" />
+  <rect
+   x="96"
+   y="208"
+   width="128"
+   height="24"
+   fill="url(#grad)"
+   id="rect9"
+   style="mix-blend-mode:normal;fill:#00ea7a;fill-opacity:1;filter:url(#filter28)"
+   transform="matrix(0.26111189,0,0,0.26713774,0.40397665,-0.8584999)" />
+  <rect
+   x="260"
+   y="160"
+   width="8"
+   height="8"
+   fill="#00ff88"
+   id="rect11"
+   transform="matrix(0.26458333,0,0,0.26458333,-0.15747435,-0.3425329)"
+   style="filter:url(#glow)" />
+  <rect
+   x="276"
+   y="162"
+   width="100"
+   height="4"
+   fill="#00ff88"
+   opacity="0.6"
+   id="rect12"
+   transform="matrix(0.26458333,0,0,0.26458333,-0.15747435,-0.3425329)"
+   style="filter:url(#glow)" />
+  <rect
+   x="260"
+   y="190"
+   width="12"
+   height="12"
+   fill="none"
+   stroke="#00ff88"
+   stroke-width="2"
+   id="rect13"
+   transform="matrix(0.26458333,0,0,0.26458333,-0.15747435,-0.3425329)"
+   style="filter:url(#glow)" />
+  <polyline
+   points="263,196 266,199 270,193"
+   stroke="#00ff88"
+   stroke-width="2"
+   fill="none"
+   id="polyline13"
+   transform="matrix(0.26458333,0,0,0.26458333,-0.15747435,-0.3425329)"
+   style="filter:url(#glow)" />
+  <rect
+   x="280"
+   y="194"
+   width="96"
+   height="4"
+   fill="#00ff88"
+   opacity="0.6"
+   id="rect14"
+   transform="matrix(0.26458333,0,0,0.26458333,-0.15747435,-0.3425329)"
+   style="filter:url(#glow)" />
+  <rect
+   x="260"
+   y="220"
+   width="8"
+   height="8"
+   fill="#00ff88"
+   id="rect15"
+   transform="matrix(0.26458333,0,0,0.26458333,-0.15747435,-0.3425329)"
+   style="filter:url(#glow)" />
+  <rect
+   x="276"
+   y="222"
+   width="100"
+   height="4"
+   fill="#00ff88"
+   opacity="0.6"
+   id="rect16"
+   transform="matrix(0.26458333,0,0,0.26458333,-0.15747435,-0.3425329)"
+   style="filter:url(#glow)" />
+  <rect
+   x="288"
+   y="250"
+   width="6"
+   height="6"
+   fill="#00cc66"
+   id="rect17"
+   transform="matrix(0.26458333,0,0,0.26458333,-0.15747435,-0.3425329)"
+   style="filter:url(#glow)" />
+  <rect
+   x="300"
+   y="251"
+   width="76"
+   height="3"
+   fill="#00cc66"
+   opacity="0.5"
+   id="rect18"
+   transform="matrix(0.26458333,0,0,0.26458333,-0.15747435,-0.3425329)"
+   style="filter:url(#glow)" />
+  <rect
+   x="260"
+   y="280"
+   width="8"
+   height="8"
+   fill="#00ff88"
+   id="rect19"
+   transform="matrix(0.26458333,0,0,0.26458333,-0.15747435,-0.3425329)"
+   style="filter:url(#glow)" />
+  <rect
+   x="276"
+   y="282"
+   width="100"
+   height="4"
+   fill="#00ff88"
+   opacity="0.6"
+   id="rect20"
+   transform="matrix(0.26458333,0,0,0.26458333,-0.15747435,-0.3425329)"
+   style="filter:url(#glow)" />
+  <text
+   x="24.334553"
+   y="97.818535"
+   font-family="monospace"
+   font-size="4.57279px"
+   fill="#00ff88"
+   opacity="0.4"
+   id="text21"
+   style="stroke-width:0.326627">hyperlist v1.4.0 $</text>
+  <rect
+   style="fill:#00fe87;fill-opacity:1;stroke:none;stroke-width:5.98157;filter:url(#filter22)"
+   id="rect22"
+   width="3.7113357"
+   height="0.52643061"
+   x="68.35778"
+   y="52.855618"
+   ry="0" />
+  <rect
+   style="fill:#00e878;fill-opacity:1;stroke:none;stroke-width:6.174;filter:url(#filter36)"
+   id="rect35"
+   width="6.6011028"
+   height="10.184608"
+   x="101.5478"
+   y="73.953667"
+   ry="0.096021399">
+    <animate
+   attributeName="opacity"
+   values="1;0;1"
+   dur="1s"
+   repeatCount="indefinite" />
+  </rect>
 </svg>
+<!-- Terminal cursor blink -->
+
