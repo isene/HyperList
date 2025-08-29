@@ -7,7 +7,7 @@
 # Check for help/version BEFORE loading any libraries
 if ARGV[0] == '-h' || ARGV[0] == '--help'
   puts <<~HELP
-    HyperList v1.3.0 - Terminal User Interface for HyperList files
+    HyperList v1.4.1 - Terminal User Interface for HyperList files
     
     USAGE
       hyperlist [OPTIONS] [FILE]
@@ -52,7 +52,7 @@ if ARGV[0] == '-h' || ARGV[0] == '--help'
   HELP
   exit 0
 elsif ARGV[0] == '-v' || ARGV[0] == '--version'
-  puts "HyperList v1.3.0"
+  puts "HyperList v1.4.0"
   exit 0
 end
 
@@ -72,7 +72,7 @@ class HyperListApp
   include Rcurses::Input
   include Rcurses::Cursor
   
-  VERSION = "1.3.0"
+  VERSION = "1.4.1"
   
   def initialize(filename = nil)
     @filename = filename ? File.expand_path(filename) : nil
@@ -86,6 +86,10 @@ class HyperListApp
     @search_matches = []  # Track search match positions
     @fold_level = 99
     @config_line = nil  # Store config line from file
+    @theme = "normal"  # Default theme
+    @wrap = false  # Line wrapping disabled by default
+    @show_numbers = false  # Line numbers disabled by default
+    @command_history = load_command_history  # Command history for : commands
     @clipboard = nil
     @undo_stack = []
     @undo_position = []  # Stack of cursor positions for undo
@@ -193,7 +197,7 @@ class HyperListApp
   def load_file(file)
     @items = []
     @encrypted_lines = {}
-    @config_line = nil  # Store config line to preserve when saving
+    @config_line = nil  # Reset config line before loading
     
     # Read file content
     content = File.read(file) rescue ""
@@ -245,7 +249,7 @@ class HyperListApp
       next if line.strip.empty?
       
       # Skip config lines (don't add them to items)
-      if line =~ /^#\s*(hyperlist|hl):\s*/
+      if line.strip =~ /^\(\(.+\)\)$/
         next
       end
       
@@ -296,8 +300,9 @@ class HyperListApp
     end
     
     # Apply configured fold level if set (after items are loaded)
-    if @config_fold_level && !is_encrypted  # Don't override encrypted file folding
-      apply_fold_level(@config_fold_level)
+    if @fold_level != 99 && !is_encrypted  # Don't override encrypted file folding
+      apply_fold_level(@fold_level)
+      @message = "Applied fold level: #{@fold_level}" if @message.nil? || @message.empty?
     end
     
     # Update recent files list
@@ -314,9 +319,13 @@ class HyperListApp
   
   def apply_fold_level(level)
     # Apply fold level: 0 = all folded, 99 = all open
+    # Show items up to and including the specified level
     # Fold items at levels greater than specified level
     @items.each_with_index do |item, idx|
       if has_children?(idx, @items)
+        # Fold if item level is greater than or equal to the fold level
+        # This means: fold_level=1 shows level 0 expanded, level 1 and deeper folded
+        # fold_level=2 shows levels 0-1 expanded, level 2 and deeper folded
         item["fold"] = item["level"] >= level
       end
     end
@@ -335,33 +344,38 @@ class HyperListApp
   
   def parse_config_line(content)
     # Look for config line at the bottom of the file
-    # Format: # hyperlist: option1=value option2=value
-    # Or: # hl: option1=value option2=value
+    # Format: ((option1=value, option2=value))
     lines = content.split("\n")
     
-    # Check last 5 lines for config (in case there are empty lines)
+    # Check last 10 lines for config (in case there are empty lines or other content)
     config_line = nil
-    lines.last(5).each do |line|
-      if line =~ /^#\s*(hyperlist|hl):\s*(.+)$/
-        @config_line = line  # Store the full line to preserve when saving
-        config_line = $2
+    lines.last(10).each do |line|
+      # Allow indented config lines
+      if line.strip =~ /^\(\((.+)\)\)$/
+        @config_line = line.strip  # Store the full line to preserve when saving
+        config_line = $1
         break
       end
     end
     
     return unless config_line
     
-    # Parse options
+    # Parse options (comma-separated)
     config_options = {}
-    config_line.scan(/(\w+)=([^\s]+)/).each do |key, value|
-      # Convert values to appropriate types
-      case key
-      when "fold_level", "auto_save_interval", "tab_width"
-        config_options[key] = value.to_i
-      when "auto_save", "wrap", "show_numbers", "highlight_current", "checkbox_date", "backup", "encrypt"
-        config_options[key] = value.downcase == "true"
-      else
-        config_options[key] = value
+    config_line.split(',').each do |option|
+      option = option.strip
+      if option =~ /(\w+)=(.+)/
+        key = $1.strip
+        value = $2.strip
+        # Convert values to appropriate types
+        case key
+        when "fold_level", "auto_save_interval", "tab_width"
+          config_options[key] = value.to_i
+        when "auto_save", "wrap", "show_numbers", "highlight_current", "checkbox_date", "backup", "encrypt"
+          config_options[key] = value.downcase == "true" || value.downcase == "yes"
+        else
+          config_options[key] = value
+        end
       end
     end
     
@@ -375,7 +389,6 @@ class HyperListApp
       case key
       when "fold_level"
         @fold_level = value if value >= 0 && value <= 99
-        @config_fold_level = value  # Store for application after items are loaded
       when "auto_save"
         @auto_save_enabled = value
       when "auto_save_interval"
@@ -395,8 +408,12 @@ class HyperListApp
           setup_ui
         end
       when "theme"
-        # Could implement theme switching here
-        @theme = value
+        # Apply theme setting
+        @theme = value if ["light", "normal", "dark"].include?(value)
+      when "wrap"
+        @wrap = value
+      when "show_numbers"
+        @show_numbers = value
       when "search_case"
         @search_case = value  # sensitive/insensitive/smart
       when "backup"
@@ -409,7 +426,16 @@ class HyperListApp
     
     # Show message about applied config
     if options.any?
-      @message = "Applied config: #{options.map{|k,v| "#{k}=#{v}"}.join(' ')}"
+      # Build message showing what was applied
+      msg_parts = []
+      msg_parts << "fold_level=#{@fold_level}" if @fold_level != 99
+      msg_parts << "theme=#{@theme}" if options["theme"]
+      msg_parts << "wrap=#{@wrap ? 'yes' : 'no'}" if options.key?("wrap")
+      msg_parts << "auto_save=#{@auto_save_enabled ? 'yes' : 'no'}" if options.key?("auto_save")
+      
+      @message = "Applied config: #{msg_parts.join(', ')}" if msg_parts.any?
+      # Set a longer timeout for config message
+      @message_timeout = Time.now + 5.0
     end
   end
   
@@ -442,6 +468,24 @@ class HyperListApp
     end
   rescue
     []
+  end
+  
+  def load_command_history
+    history_file = File.expand_path("~/.hyperlist_command_history")
+    return [] unless File.exist?(history_file)
+    
+    File.readlines(history_file).map(&:strip).reject(&:empty?).last(100)
+  rescue
+    []
+  end
+  
+  def save_command_history
+    history_file = File.expand_path("~/.hyperlist_command_history")
+    File.open(history_file, 'w') do |f|
+      @command_history.last(100).each { |cmd| f.puts(cmd) }
+    end
+  rescue
+    # Silently fail if can't write history
   end
   
   def show_recent_files
@@ -549,8 +593,20 @@ class HyperListApp
     end.join("\n")
     
     # Append config line if present
-    if @config_line
-      content += "\n\n" + @config_line
+    if @config_line && !@config_line.empty?
+      # Ensure there's a blank line before config
+      content += "\n" unless content.end_with?("\n")
+      content += "\n" + @config_line
+    else
+      # Debug: Check why config line is missing
+      if @fold_level != 99
+        # Rebuild config line if we have config settings but no line
+        update_config_line
+        if @config_line && !@config_line.empty?
+          content += "\n" unless content.end_with?("\n")
+          content += "\n" + @config_line
+        end
+      end
     end
     
     # Check if this should be an encrypted file
@@ -852,6 +908,61 @@ class HyperListApp
   end
   
   
+  def wrap_line(text, width, indent_level)
+    # Wrap a line per HyperList spec:
+    # Multi-line items start with '+' on first line
+    # Continuation lines have just a space prefix
+    return [text] unless @wrap
+    
+    # Calculate effective width (account for indent and fold indicators)
+    indent_width = @indent_size * indent_level + 2  # +2 for fold indicator
+    effective_width = width - indent_width - 5  # Extra margin for readability
+    
+    return [text] if text.length <= effective_width || effective_width <= 10
+    
+    wrapped = []
+    remaining = text.dup
+    first_line = true
+    
+    # Check if line already starts with + (multi-line indicator)
+    has_plus = text.strip.start_with?('+')
+    if has_plus
+      # Remove the + for processing, we'll add it back
+      remaining = remaining.sub(/^\s*\+\s*/, '')
+    end
+    
+    while remaining && !remaining.empty?
+      if first_line
+        # First line gets the multi-line indicator if needed
+        if remaining.length <= effective_width
+          wrapped << (has_plus || wrapped.any? ? "+ #{remaining}" : remaining)
+          break
+        else
+          # Find a good break point (prefer spaces)
+          break_point = remaining[0...effective_width].rindex(' ') || effective_width
+          line_text = remaining[0...break_point].rstrip
+          # Add + to first line of multi-line items
+          wrapped << "+ #{line_text}"
+          remaining = remaining[break_point..-1].lstrip
+          first_line = false
+        end
+      else
+        # Continuation lines get just a space prefix per HyperList spec
+        cont_width = effective_width - 1  # Account for space prefix
+        if remaining.length <= cont_width
+          wrapped << " #{remaining}"
+          break
+        else
+          break_point = remaining[0...cont_width].rindex(' ') || cont_width
+          wrapped << " #{remaining[0...break_point].rstrip}"
+          remaining = remaining[break_point..-1].lstrip
+        end
+      end
+    end
+    
+    wrapped
+  end
+  
   def render_main
     visible_items = get_visible_items
     
@@ -863,61 +974,91 @@ class HyperListApp
     visible_items.each_with_index do |item, idx|
       next unless item
       
-      line = ' ' * (@indent_size * item["level"])
-      
-      # Add fold indicator
-      real_idx = get_real_index(item)
-      if real_idx && has_children?(real_idx, @items) && item["fold"]
-        color = (@presentation_mode && !is_item_in_presentation_focus?(item)) ? "240" : "245"
-        line += "▶".fg(color) + " "
-      elsif real_idx && has_children?(real_idx, @items)
-        color = (@presentation_mode && !is_item_in_presentation_focus?(item)) ? "240" : "245"
-        line += "▷".fg(color) + " "
+      # Handle line wrapping if enabled
+      if @wrap
+        text_lines = wrap_line(item["text"], @cols, item["level"])
       else
-        line += "  "
+        text_lines = [item["text"]]
       end
       
-      # Handle literal blocks and syntax highlighting
-      if item["text"].strip == "\\"
-        if !in_literal_block
-          in_literal_block = true
-          literal_start_level = item["level"]
-          spaces = item["text"].match(/^(\s*)/)[1]
-          line += spaces + "\\".fg("3")
-        elsif item["level"] == literal_start_level
-          in_literal_block = false
-          literal_start_level = -1
-          spaces = item["text"].match(/^(\s*)/)[1]
-          line += spaces + "\\".fg("3")
-        else
-          line += item["text"]
-        end
-      elsif in_literal_block
-        line += item["text"]
-      else
-        # Normal syntax highlighting
-        has_match = @search_matches.include?(idx) && @search && !@search.empty?
-        if @presentation_mode && !is_item_in_presentation_focus?(item)
-          line += item["text"].fg("240")
-        else
-          line += process_text(item["text"], has_match)
-        end
-      end
-      
-      # Apply current item highlighting (but not in presentation mode for focused items)
-      if idx == @current
-        # Skip background highlighting in presentation mode for items in focus
-        if !(@presentation_mode && is_item_in_presentation_focus?(item))
-          bg_color = (!@split_view || @active_pane == :main) ? "237" : "234"
-          if bg_color
-            bg_code = "\e[48;5;#{bg_color}m"
-            reset_bg = "\e[49m"
-            line = bg_code + line.gsub(/\e\[49m/, '') + reset_bg
+      text_lines.each_with_index do |text_line, line_idx|
+        # Get the actual line number from the real index in @items
+        real_idx = get_real_index(item)
+        actual_line_number = real_idx ? real_idx + 1 : 0  # +1 for 1-based line numbers
+        
+        # Add line number if enabled (only on first line of wrapped text)
+        line = ""
+        if @show_numbers
+          if line_idx == 0
+            line = "#{actual_line_number.to_s.rjust(4)} "
+          else
+            line = "     "  # Empty space for continuation lines
           end
         end
+        
+        line += ' ' * (@indent_size * item["level"])
+        
+        # Add fold indicator only on first line
+        if line_idx == 0
+          real_idx = get_real_index(item)
+          if real_idx && has_children?(real_idx, @items) && item["fold"]
+            color = (@presentation_mode && !is_item_in_presentation_focus?(item)) ? "240" : "245"
+            line += "▶".fg(color) + " "
+          elsif real_idx && has_children?(real_idx, @items)
+            color = (@presentation_mode && !is_item_in_presentation_focus?(item)) ? "240" : "245"
+            line += "▷".fg(color) + " "
+          else
+            line += "  "
+          end
+        else
+          # Continuation lines already have their space prefix from wrap_line
+          line += "  "  # Just add fold indicator spacing
+        end
+        
+        # Handle literal blocks and syntax highlighting
+        if item["text"].strip == "\\"
+          if !in_literal_block
+            in_literal_block = true
+            literal_start_level = item["level"]
+            spaces = text_line.match(/^(\s*)/)[1] || ""
+            line += spaces + "\\".fg("3")
+          elsif item["level"] == literal_start_level
+            in_literal_block = false
+            literal_start_level = -1
+            spaces = text_line.match(/^(\s*)/)[1] || ""
+            line += spaces + "\\".fg("3")
+          else
+            line += text_line
+          end
+        elsif in_literal_block
+          line += text_line
+        else
+          # Normal syntax highlighting
+          has_match = @search_matches.include?(idx) && @search && !@search.empty?
+          if @presentation_mode && !is_item_in_presentation_focus?(item)
+            line += text_line.fg("240")
+          else
+            line += process_text(text_line, has_match)
+          end
+        end
+        
+        # Apply current item highlighting (all lines of wrapped text get bg)
+        if idx == @current
+          # Skip background highlighting in presentation mode for items in focus
+          if !(@presentation_mode && is_item_in_presentation_focus?(item))
+            bg_color = (!@split_view || @active_pane == :main) ? "237" : "234"
+            if bg_color
+              # Pad line to full width and apply background
+              padded_line = line + " " * [@cols - line.pure.length, 0].max
+              bg_code = "\e[48;5;#{bg_color}m"
+              reset_bg = "\e[49m"
+              line = bg_code + padded_line.gsub(/\e\[49m/, '') + reset_bg
+            end
+          end
+        end
+        
+        lines << line
       end
-      
-      lines << line
       
       # Check if exiting literal block
       if in_literal_block && item["level"] <= literal_start_level && !item["text"].strip == "\\"
@@ -968,10 +1109,63 @@ class HyperListApp
     @main.refresh
   end
   
+  def get_theme_colors
+    # Theme definitions based on HyperList spec colors
+    # Using hex RGB colors (RRGGBB format) for rcurses
+    # Per HyperList spec from hyperlist.tex:
+    # red (properties/dates), green (qualifiers/states), blue (operators)
+    # magenta/violet (references), cyan (parentheses/quotes), yellow (literals)
+    # orange (tags)
+    case @theme
+    when "light"
+      # Brighter, more saturated colors for dark terminals
+      {
+        "red" => "FF5050",       # Bright red for properties
+        "green" => "50FF50",     # Bright green for qualifiers  
+        "blue" => "6496FF",      # Bright blue for operators
+        "magenta" => "C864FF",   # Light purple/violet for references
+        "cyan" => "50FFFF",      # Bright cyan for parentheses
+        "yellow" => "FFFF64",    # Bright yellow for literals
+        "orange" => "FFB450",    # Bright orange for tags
+        "gray" => "C8C8C8"       # Light gray
+      }
+    when "dark"
+      # Darker, less saturated colors for light background terminals
+      {
+        "red" => "B40000",       # Dark red for properties
+        "green" => "008C00",     # Dark green for qualifiers
+        "blue" => "0000B4",      # Dark blue for operators  
+        "magenta" => "8C008C",   # Dark purple for references
+        "cyan" => "008C8C",      # Dark cyan for parentheses
+        "yellow" => "8C8C00",    # Dark yellow for literals
+        "orange" => "B46400",    # Dark orange for tags
+        "gray" => "646464"       # Dark gray
+      }
+    else # normal - using 256 color codes for compatibility
+      {
+        "red" => "196",          # Red for properties/dates (standard red)
+        "green" => "46",         # Green for qualifiers/checkboxes 
+        "blue" => "21",          # Blue for operators (AND/OR/IF/THEN)
+        "magenta" => "165",      # Purple/violet for references  
+        "cyan" => "51",          # Cyan for parentheses/quotes
+        "yellow" => "226",       # Yellow for literals/substitutions
+        "orange" => "208",       # Orange for tags
+        "gray" => "245"          # Gray
+      }
+    end
+  end
+
   def process_text(text, highlight_search = false)
     # Work with a clean copy
     result = text.dup
     processed_checkbox = false
+    colors = get_theme_colors
+    
+    # Config lines should never be displayed (they're filtered out)
+    # But if somehow one gets through, don't process it
+    if result =~ /^\(\(.+\)\)$/
+      return ""
+    end
     
     # If text already contains ANSI codes, return as-is to avoid double-processing
     if result.include?("\e[")
@@ -1030,7 +1224,7 @@ class HyperListApp
     
     # Check if this is a literal block marker (single backslash)
     if result.strip == "\\"
-      return result.fg("3")  # Yellow for literal block markers
+      return result.fg(colors["yellow"])  # Yellow for literal block markers
     end
     
     # Apply search highlighting if we have an active search
@@ -1044,47 +1238,47 @@ class HyperListApp
     # Based on hyperlist.vim: '^\(\t\|\*\)*[0-9.]* '
     if result =~ /^([0-9][0-9A-Z.]*\s)/
       identifier = $1
-      result = result.sub(/^[0-9][0-9A-Z.]*\s/, identifier.fg("5"))  # Magenta for identifiers
+      result = result.sub(/^[0-9][0-9A-Z.]*\s/, identifier.fg(colors["magenta"]))  # Magenta for identifiers
     end
     
     # Handle multi-line indicator at the beginning (+ with space)
     # Based on hyperlist.vim: '^\(\t\|\*\)*+ '
     if result =~ /^\+\s/
-      result = result.sub(/^(\+\s)/, "+".fg("1") + " ")  # Red for multi-line indicator
+      result = result.sub(/^(\+\s)/, "+".fg(colors["red"]) + " ")  # Red for multi-line indicator
     end
     
     # Handle continuation markers (+ at start of indented lines in References section)
     if result =~ /^\s*\+\s/
       spaces = $1 || ""
       marker = $2 || "+ "
-      result = result.sub(/^(\s*)(\+\s)/, spaces + marker.fg("1"))  # Red for continuation marker
+      result = result.sub(/^(\s*)(\+\s)/, spaces + marker.fg(colors["red"]))  # Red for continuation marker
     end
     
     # Process checkboxes anywhere in the line (can have leading spaces)
     if result =~ /^(\s*)(\[X\]|\[x\])/
       spaces = $1
-      colored = "[X]".fg("10")
+      colored = "[X]".fg(colors["green"])
       result = result.sub(/^(\s*)(\[X\]|\[x\])/, "#{spaces}#{colored}")  # Bright green for completed
       processed_checkbox = true
     elsif result =~ /^(\s*)(\[O\])/
       spaces = $1
-      colored = "[O]".fg("10").b
+      colored = "[O]".fg(colors["green"]).b
       result = result.sub(/^(\s*)(\[O\])/, "#{spaces}#{colored}")  # Bold bright green for in-progress
       processed_checkbox = true
     elsif result =~ /^(\s*)(\[-\])/
       spaces = $1
-      colored = "[-]".fg("2")
+      colored = "[-]".fg(colors["green"])
       result = result.sub(/^(\s*)(\[-\])/, "#{spaces}#{colored}")  # Green for partial
       processed_checkbox = true
     elsif result =~ /^(\s*)(\[ \]|\[_\])/
       spaces = $1
-      colored = "[ ]".fg("22")
+      colored = "[ ]".fg(colors["green"])
       result = result.sub(/^(\s*)(\[ \]|\[_\])/, "#{spaces}#{colored}")  # Dark green for unchecked
       processed_checkbox = true
     elsif !processed_checkbox
       # Only handle other qualifiers if we didn't process a checkbox
       # Based on hyperlist.vim: '\[.\{-}\]'
-      result.gsub!(/\[([^\]]*)\]/) { "[#{$1}]".fg("2") }  # Green for all qualifiers
+      result.gsub!(/\[([^\]]*)\]/) { "[#{$1}]".fg(colors["green"]) }  # Green for all qualifiers
     end
     
     # We'll handle parentheses AFTER operators/properties to avoid conflicts
@@ -1092,7 +1286,7 @@ class HyperListApp
     # Handle date timestamps as properties (for checkbox dates)
     # Format: YYYY-MM-DD HH.MM:
     result.gsub!(/(\d{4}-\d{2}-\d{2} \d{2}\.\d{2}):/) do
-      "#{$1}:".fg("1")  # Red for timestamp properties
+      "#{$1}:".fg(colors["red"])  # Red for timestamp properties
     end
     
     # Handle operators and properties with colon pattern
@@ -1106,10 +1300,10 @@ class HyperListApp
       
       # Check if it's an operator (ALL-CAPS with optional _, -, (), /, =, spaces)
       if text_part =~ /^[A-Z][A-Z_\-() \/=]*$/
-        prefix_space + text_part.fg("4") + colon_space.fg("4")  # Blue for operators (including S: and T:)
+        prefix_space + text_part.fg(colors["blue"]) + colon_space.fg(colors["blue"])  # Blue for operators (including S: and T:)
       elsif text_part.length >= 2 && space_after.include?(" ")
         # It's a property (mixed case, at least 2 chars, has space after colon)
-        prefix_space + text_part.fg("1") + colon_space.fg("1")  # Red for properties
+        prefix_space + text_part.fg(colors["red"]) + colon_space.fg(colors["red"])  # Red for properties
       else
         # Leave as is
         prefix_space + text_part + colon_space
@@ -1118,57 +1312,57 @@ class HyperListApp
     
     
     # Color special state/transition markers (| and /) green
-    result.gsub!(/^(\s*)\|\s+/) { $1 + "| ".fg("2") }  # Green for pipe (state marker)
-    result.gsub!(/^(\s*)\/\s+/) { $1 + "/ ".fg("2") }  # Green for slash (transition marker)
+    result.gsub!(/^(\s*)\|\s+/) { $1 + "| ".fg(colors["green"]) }  # Green for pipe (state marker)
+    result.gsub!(/^(\s*)\/\s+/) { $1 + "/ ".fg(colors["green"]) }  # Green for slash (transition marker)
     
     # Handle OR: at the beginning of a line (with optional spaces)
-    result.sub!(/^(\s*)(OR):/) { $1 + "OR:".fg("4") }  # Blue for OR: at line start
+    result.sub!(/^(\s*)(OR):/) { $1 + "OR:".fg(colors["blue"]) }  # Blue for OR: at line start
     
     # Handle parentheses content (moved here to avoid conflicts with properties)
     # Based on hyperlist.vim: '(.\{-})'
     result = safe_regex_replace(result, /\(([^)]*)\)/) do |match|
       content = match[1..-2]  # Extract content between parentheses
-      "(".fg("6") + content.fg("6") + ")".fg("6")
+      "(".fg(colors["cyan"]) + content.fg(colors["cyan"]) + ")".fg(colors["cyan"])
     end
     
     # Handle semicolons as separators (they separate items on the same line)
     # Semicolons are green like qualifiers
-    result = safe_regex_replace(result, /;/) { ";".fg("2") }
+    result = safe_regex_replace(result, /;/) { ";".fg(colors["green"]) }
     
     # Handle references - color entire reference including brackets
     # Based on hyperlist.vim: '<\{1,2}[...]\+>\{1,2}'
-    result.gsub!(/<{1,2}([^>]+)>{1,2}/) { |match| match.fg("5") }  # Magenta for references
+    result.gsub!(/<{1,2}([^>]+)>{1,2}/) { |match| match.fg(colors["magenta"]) }  # Magenta for references
     
     # Handle special keywords SKIP and END
-    result.gsub!(/\b(SKIP|END)\b/) { $1.fg("5") }  # Magenta for special keywords (like references)
+    result.gsub!(/\b(SKIP|END)\b/) { $1.fg(colors["magenta"]) }  # Magenta for special keywords (like references)
     
     # Handle quoted strings (only double quotes are special in HyperList)
     # Based on hyperlist.vim: '".\{-}"'
     result.gsub!(/"([^"]*)"/) do
       content = $1
       # Color any ## sequences inside the quotes as red
-      content.gsub!(/(##[<>-]+)/) { $1.fg("1") }
-      '"'.fg("6") + content.fg("6") + '"'.fg("6")  # Cyan for quoted strings
+      content.gsub!(/(##[<>-]+)/) { $1.fg(colors["red"]) }
+      '"'.fg(colors["cyan"]) + content.fg(colors["cyan"]) + '"'.fg(colors["cyan"])  # Cyan for quoted strings
     end
     
     # Handle change markup - all double-hashes should be red
     # First handle ##><Reference>##-> style (with reference in the middle)
     result.gsub!(/(##[<>-]+)(<[^>]+>)(##[<>-]+)/) do
-      $1.fg("1") + $2.fg("5") + $3.fg("1")  # Red markers, magenta reference
+      $1.fg(colors["red"]) + $2.fg(colors["magenta"]) + $3.fg(colors["red"])  # Red markers, magenta reference
     end
     
     # Handle ##Text## change info (text between double hashes)
-    result.gsub!(/(##)([^#]+)(##)/) { $1.fg("1") + $2 + $3.fg("1") }  # Red for change info markers
+    result.gsub!(/(##)([^#]+)(##)/) { $1.fg(colors["red"]) + $2 + $3.fg(colors["red"]) }  # Red for change info markers
     
     # Then color any remaining ## sequences red
-    result.gsub!(/(##[<>-]*)/) { $1.fg("1") }  # Red for all ## markers
+    result.gsub!(/(##[<>-]*)/) { $1.fg(colors["red"]) }  # Red for all ## markers
     
     # Handle substitutions {variable}
-    result.gsub!(/\{([^}]+)\}/) { "{".fg("3") + $1.fg("3") + "}".fg("3") }  # Yellow for substitutions
+    result.gsub!(/\{([^}]+)\}/) { "{".fg(colors["yellow"]) + $1.fg(colors["yellow"]) + "}".fg(colors["yellow"]) }  # Yellow for substitutions
     
     # Handle hash tags
     # Based on hyperlist.vim: '#[a-zA-Z0-9.:/_&?%=+\-\*]\+'
-    result.gsub!(/#([a-zA-Z0-9.:_\/&?%=+\-*]+)/) { "##{$1}".fg("184") }  # Yellow/gold for tags
+    result.gsub!(/#([a-zA-Z0-9.:_\/&?%=+\-*]+)/) { "##{$1}".fg(colors["orange"]) }  # Orange for tags
     
     # Handle text formatting (bold, italic, underline)
     # Based on hyperlist.vim patterns with tab/space boundaries
@@ -2600,8 +2794,13 @@ class HyperListApp
   end
   
   def show_help
-    # Build help text using consistent formatting
-    help_lines = []
+    begin
+      # Build help text using consistent formatting
+      help_lines = []
+      
+      # Debug logging
+      debug_log = File.open("/tmp/hyperlist_help_debug.log", "w") rescue nil
+      debug_log.puts "show_help called at #{Time.now}" if debug_log
     help_lines << " Press #{"?".fg("10")} for full documentation, #{"UP/DOWN".fg("10")} to scroll, or any other key to return"
     help_lines << ""
     help_lines << "#{"HYPERLIST KEY BINDINGS".b}"
@@ -2630,7 +2829,7 @@ class HyperListApp
     help_lines << help_line("#{"i/Enter".fg("10")}", "Edit line", "#{"o".fg("10")}", "Insert line below")
     help_lines << help_line("#{"O".fg("10")}", "Insert line above", "#{"a".fg("10")}", "Insert child")
     help_lines << help_line("#{"A".fg("10")}", "Insert outdented", "#{"W".fg("10")}", "Save and quit")
-    help_lines << help_line("#{"I".fg("10")}", "Cycle indent (2-5)", "", "")
+    help_lines << help_line("#{"I".fg("10")}", "Cycle indent (2-5)")
     help_lines << help_line("#{"D".fg("10")}", "Delete+yank line", "#{"C-D".fg("10")}", "Delete+yank item&descendants")
     help_lines << help_line("#{"y".fg("10")}" + "/".fg("10") + "#{"Y".fg("10")}", "Copy line/tree", "#{"p".fg("10")}", "Paste")
     help_lines << help_line("#{"u".fg("10")}", "Undo", "#{".".fg("10")}", "Repeat last action")
@@ -2645,7 +2844,7 @@ class HyperListApp
     help_lines << help_line("#{"C-E".fg("10")}", "Encrypt/decrypt line", "#{"C-U".fg("10")}", "Toggle State/Trans underline")
     help_lines << help_line("#{"P".fg("10")}", "Presentation mode", "#{"Tab/S-Tab".fg("10")}", "Next/prev sibling (in P)")
     help_lines << help_line("#{"Ma".fg("10")}", "Record macro 'a'", "#{"@a".fg("10")}", "Play macro 'a'")
-    help_lines << help_line("#{"w".fg("10")}", "Switch panes (split view)", "", "")
+    help_lines << help_line("#{"w".fg("10")}", "Switch panes (split view)")
     help_lines << ""
     help_lines << "#{"FILE OPERATIONS".fg("14")}"
     help_lines << help_line("#{":w".fg("10")}", "Save", "#{":q".fg("10")}", "Quit")
@@ -2659,6 +2858,29 @@ class HyperListApp
     help_lines << help_line("#{"t".fg("10")}", "Insert template", "#{":st".fg("10")}", "Save as template")
     help_lines << help_line("#{":dt".fg("10")}", "Delete template", "#{":lt".fg("10")}", "List user templates")
     help_lines << ""
+    
+    # Try adding CONFIGURATION section with error handling
+    begin
+      debug_log.puts "Starting CONFIGURATION section" if debug_log
+      help_lines << "#{"CONFIGURATION".fg("14")}"
+      debug_log.puts "Added CONFIGURATION header" if debug_log
+      
+      line1 = help_line("#{":set".fg("10")}", "Show all settings", "#{":set option".fg("10")}", "Show option value")
+      debug_log.puts "Line1: #{line1.inspect}" if debug_log
+      help_lines << line1
+      
+      line2 = help_line("#{":set option=val".fg("10")}", "Set option")
+      debug_log.puts "Line2: #{line2.inspect}" if debug_log
+      help_lines << line2
+      
+      help_lines << ""
+      debug_log.puts "CONFIGURATION section complete" if debug_log
+    rescue => e
+      debug_log.puts "Error in CONFIGURATION: #{e.message}" if debug_log
+      debug_log.puts e.backtrace.join("\n") if debug_log
+      # Fall through and continue without config section
+    end
+    
     help_lines << "#{"HELP & QUIT".fg("14")}"
     help_lines << help_line("#{"?".fg("10")}", "This help", "#{"??".fg("10")}", "Full documentation")
     help_lines << help_line("#{"q".fg("10")}", "Quit (asks to save)", "#{"Q".fg("10")}", "Force quit")
@@ -2672,6 +2894,9 @@ class HyperListApp
     help_lines << help_line("#{";".fg("2")}", "Separator", "#{"#tag".fg("184")}", "Hash tags")
     
     help = help_lines.join("\n")
+    
+    debug_log.puts "Help generation complete, #{help_lines.length} lines" if debug_log
+    debug_log.close if debug_log
     
     # Store current state
     saved_items = @items.dup
@@ -2726,6 +2951,18 @@ class HyperListApp
     @current = saved_current
     @offset = saved_offset
     @modified = saved_modified
+    
+    rescue => e
+      # Log the error and show a simple message
+      File.open("/tmp/hyperlist_help_crash.log", "w") do |f|
+        f.puts "Help crashed at #{Time.now}"
+        f.puts "Error: #{e.message}"
+        f.puts "Backtrace:"
+        f.puts e.backtrace.join("\n")
+      end rescue nil
+      
+      @message = "Help error logged to /tmp/hyperlist_help_crash.log"
+    end
   end
   
   def show_documentation
@@ -3263,12 +3500,23 @@ class HyperListApp
   
   def handle_command
     @mode = :command
+    # Set command history (reversed for proper UP arrow navigation)
+    @footer.history = @command_history.reverse
+    @footer.record = true
     @command = @footer.ask(":", "")
     @mode = :normal
     @footer.clear  # Clear footer immediately
     @footer.refresh
     
     return unless @command
+    
+    # Add to history if not empty and not duplicate of last entry
+    if !@command.empty? && (@command_history.empty? || @command_history.last != @command)
+      @command_history << @command
+      # Keep only last 100 commands
+      @command_history = @command_history.last(100)
+      save_command_history
+    end
     
     case @command
     when "w", "write"
@@ -3361,9 +3609,132 @@ class HyperListApp
     when "split"
       # Copy current section to split view
       copy_section_to_split
+    when /^set\s+(\w+)=(.+)$/
+      # Handle :set option=value
+      option = $1
+      value = $2.strip
+      set_config_option(option, value)
+    when /^set\s+(\w+)$/
+      # Handle :set option (show current value)
+      option = $1
+      show_config_option(option)
+    when "set"
+      # Show all current settings
+      show_all_config_options
     else
       @message = "Unknown command: #{@command}"
     end
+  end
+  
+  def set_config_option(option, value)
+    # Convert value to appropriate type
+    case option
+    when "theme"
+      if ["light", "normal", "dark"].include?(value)
+        @theme = value
+        @message = "Theme set to: #{value}"
+      else
+        @message = "Invalid theme. Use: light, normal, or dark"
+      end
+    when "wrap"
+      @wrap = value == "yes" || value == "true"
+      @message = "Line wrapping #{@wrap ? 'enabled' : 'disabled'}"
+    when "show_numbers"
+      @show_numbers = value == "yes" || value == "true"
+      @message = "Line numbers #{@show_numbers ? 'enabled' : 'disabled'}"
+    when "fold_level"
+      level = value.to_i
+      if level >= 0 && level <= 99
+        @fold_level = level
+        apply_fold_level(level)
+        @message = "Fold level set to: #{level}"
+      else
+        @message = "Invalid fold level. Use 0-99"
+      end
+    when "auto_save"
+      @auto_save_enabled = value == "yes" || value == "true"
+      @message = "Auto-save #{@auto_save_enabled ? 'enabled' : 'disabled'}"
+    when "auto_save_interval"
+      interval = value.to_i
+      if interval > 0
+        @auto_save_interval = interval
+        @message = "Auto-save interval set to: #{interval} seconds"
+      else
+        @message = "Invalid interval. Must be > 0"
+      end
+    when "tab_width", "indent_size"
+      width = value.to_i
+      if width >= 2 && width <= 8
+        @indent_size = width
+        @message = "Tab width set to: #{width}"
+      else
+        @message = "Invalid tab width. Use 2-8"
+      end
+    else
+      @message = "Unknown option: #{option}"
+    end
+    
+    # Update config line if it exists
+    update_config_line
+  end
+  
+  def show_config_option(option)
+    case option
+    when "theme"
+      @message = "theme=#{@theme}"
+    when "wrap"
+      @message = "wrap=#{@wrap ? 'yes' : 'no'}"
+    when "show_numbers"
+      @message = "show_numbers=#{@show_numbers ? 'yes' : 'no'}"
+    when "fold_level"
+      @message = "fold_level=#{@fold_level}"
+    when "auto_save"
+      @message = "auto_save=#{@auto_save_enabled ? 'yes' : 'no'}"
+    when "auto_save_interval"
+      @message = "auto_save_interval=#{@auto_save_interval}"
+    when "tab_width", "indent_size"
+      @message = "tab_width=#{@indent_size}"
+    else
+      @message = "Unknown option: #{option}"
+    end
+  end
+  
+  def show_all_config_options
+    options = []
+    options << "theme=#{@theme}"
+    options << "wrap=#{@wrap ? 'yes' : 'no'}"
+    options << "show_numbers=#{@show_numbers ? 'yes' : 'no'}"
+    options << "fold_level=#{@fold_level}"
+    options << "auto_save=#{@auto_save_enabled ? 'yes' : 'no'}"
+    options << "auto_save_interval=#{@auto_save_interval}"
+    options << "tab_width=#{@indent_size}"
+    @message = "Settings: #{options.join(', ')}"
+  end
+  
+  def update_config_line
+    # Build new config line based on current settings
+    # This should preserve the config line and update it with current values
+    options = []
+    
+    # Include fold_level if it's not the default
+    if @fold_level != 99
+      options << "fold_level=#{@fold_level}"
+    end
+    
+    options << "theme=#{@theme}" if @theme != "normal"
+    options << "wrap=yes" if @wrap
+    options << "show_numbers=yes" if @show_numbers
+    options << "auto_save=yes" if @auto_save_enabled
+    options << "auto_save_interval=#{@auto_save_interval}" if @auto_save_interval != 60
+    options << "tab_width=#{@indent_size}" if @indent_size != 2
+    
+    if options.any?
+      @config_line = "((#{options.join(', ')}))"
+    else
+      @config_line = nil
+    end
+    
+    @modified = true
   end
   
   def jump_to_reference
@@ -4540,11 +4911,19 @@ class HyperListApp
     visible_items.each_with_index do |item, idx|
       next unless item
       
-      line = "    " * item["level"]
-      
-      # Add fold indicator with colors
       # Find the item's position in the original split_items array
       real_idx = @split_items.index(item)
+      
+      # Add line number if enabled
+      line = ""
+      if @show_numbers
+        actual_line_number = real_idx ? real_idx + 1 : 0  # +1 for 1-based line numbers
+        line = "#{actual_line_number.to_s.rjust(4)} "
+      end
+      
+      line += "    " * item["level"]
+      
+      # Add fold indicator with colors
       if real_idx && has_children_in_array?(real_idx, @split_items)
         if item["fold"]
           line += "▶".fg("245") + " "
@@ -5080,6 +5459,7 @@ class HyperListApp
   end
   
   def quit
+    save_command_history
     Cursor.show
     Rcurses.clear_screen
     exit

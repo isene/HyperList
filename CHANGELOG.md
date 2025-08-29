@@ -2,22 +2,58 @@
 
 All notable changes to the HyperList Ruby TUI will be documented in this file.
 
-## [1.3.0] - 2025-08-28
+## [1.4.1] - 2025-08-29
+
+### Fixed
+- **Configuration system improvements**
+  - Config lines are now completely invisible (not shown in gray)
+  - Config management only through `:set` commands
+  - Fixed `:set` commands to properly update config lines when saving
+  - Fixed fold_level persistence issue when using `:set fold_level=N`
+  - Fixed help screen crash when showing configuration section
+  - Added error logging for help screen debugging
+  
+### Changed
+- **Line numbering improvements**
+  - Line numbers now show actual line position in file (including collapsed lines)
+  - Both main pane and split pane show true line numbers
+  - Wrapped lines show line number only on first line
+  
+### Added
+- **Help system documentation**
+  - Added CONFIGURATION section to help screen (?)
+  - Documents all `:set` commands and available options
+  - Explains config line format and behavior
+
+## [1.4.0] - 2025-08-28
 
 ### Added
-- **Configuration Lines** (similar to vim modelines)
-  - Add configuration options at the bottom of HyperList files
-  - Format: `# hyperlist: option1=value option2=value` or `# hl: option1=value`
-  - Supported options:
-    - `fold_level` - Default fold level (0=all closed, 99=all open)
-    - `auto_save` - Enable/disable auto-save (true/false)
-    - `auto_save_interval` - Seconds between auto-saves
-    - `tab_width`/`indent_size` - Spaces per indentation level (2-8)
-    - `presentation_mode` - Start in presentation mode (true/false)
-    - `default_view` - Start in specific view (normal/presentation/split)
-  - Configuration lines are preserved when saving
-  - Configuration lines are hidden from the displayed items
-  - Applied configuration is shown in status message on file load
+- **Configuration Lines & Theming**
+  - New configuration line format: `((option=value, option2=value))`
+  - Configuration lines displayed in gray when shown
+  - Three color themes: `light` (bright), `normal` (standard), `dark` (for light terminals)
+  - Line wrapping with `+` prefix per HyperList specification
+  - Line number display option
+  - Manual configuration via `:set` commands
+  - `:set option=value` to change settings
+  - `:set option` to view a setting
+  - `:set` to view all settings
+  - **Command history** with UP/DOWN arrow navigation
+  - History persistence between sessions (~/.hyperlist_command_history)
+  - Configuration options:
+    - `theme` - Color theme (light/normal/dark)
+    - `wrap` - Line wrapping (yes/no)
+    - `show_numbers` - Display line numbers (yes/no)
+    - `fold_level` - Default fold level (0-99)
+    - `auto_save` - Auto-save enable (yes/no)
+    - `auto_save_interval` - Auto-save frequency (seconds)
+    - `tab_width` - Indentation width (2-8)
+
+## [1.3.0] - 2025-08-28
+
+### Added  
+- **Initial Configuration Support**
+  - Basic config line parsing (old format, now deprecated)
 
 ## [1.2.7] - 2025-08-27
 

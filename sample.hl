@@ -1,83 +1,85 @@
 HyperList Sample Document
-	Project Management #project
-		[ ] Planning Phase
-			[X] Define objectives
-			[X] Identify stakeholders
-			[O] Create timeline
-			[ ] Budget estimation
-				Research costs
-				Get quotes from vendors
-				[3] Review with finance team
-		Implementation
-			Development Tasks
-				[ ] Backend API
-					Authentication module
-					Database schema
-					REST endpoints
-				[ ] Frontend UI
-					Login page
-					Dashboard
-					Reports section
-			Testing
-				Unit tests
-				Integration tests
-				User acceptance testing
-		Documentation
-			Technical documentation
-			User manual
-			Training materials
-	Personal Tasks #personal
-		[X] Morning routine
-			[X] Exercise
-			[X] Breakfast
-			[X] Review calendar
-		[x] 2025-08-11 13.30: Review meeting notes
-		[ ] Shopping list
-			[5 liters] Milk
-			[2 packages] Butter
-			Vegetables
-				Tomatoes
-				Lettuce
-				Carrots
-		Learning goals
-			*Master* Ruby programming
-			Study /design patterns/
-			Practice _algorithms_
-	References and Links
-		<file:~/Documents/specs.pdf>
-		<https://example.com/documentation>
-		See also: <Project Management>
-		Previous version: <-10>
-	Complex Examples
-		2025-08-11 11.51: Meeting notes
-		State: System initialized
-		Transition: User login -> Dashboard
-		[2..5] Retry attempts allowed
-		[?] Optional configuration
-			; This is a comment
-			Setting A = value1
-			Setting B = value2
-		Examples with parentheses and quotes
-			Meeting (scheduled for 2pm)
-			Task "Review documentation" (high priority)
-			Note: 'This is important' (see reference)
-		Conditional examples with operators
-			AND: Complete all tests AND: Deploy to production
-			OR: Use Docker OR: Use Kubernetes
-			IF: Tests pass THEN: Deploy automatically
-			NOT: Include debug logs
-			WHEN: User logged in THEN: Show dashboard
-			UNLESS: Admin privileges THEN: Deny access
-		Multi-level nesting example
-			Level 1
-				Level 2
-					Level 3
-						Level 4
-							Level 5
-								Deep nesting test
-	Markdown-style formatting
-		*Bold text example*
-		/Italic text example/
-		_Underlined text example_
-		Combined: *bold and /italic/ together*
-		Hash tags: #important #urgent #review
+  Project Management #project
+    [ ] Planning Phase
+      [X] Define objectives
+      [X] Identify stakeholders
+      [O] Create timeline
+      [ ] Budget estimation
+        Research costs
+        Get quotes from vendors
+        [3] Review with finance team
+    Implementation
+      Development Tasks
+        [ ] Backend API
+          Authentication module
+          Database schema
+          REST endpoints
+        [ ] Frontend UI
+          Login page
+          Dashboard
+          Reports section
+      Testing
+        Unit tests
+        Integration tests
+        User acceptance testing
+    Documentation
+      Technical documentation
+      User manual
+      Training materials
+  Personal Tasks #personal
+    [X] Morning routine
+      [X] Exercise
+      [X] Breakfast
+      [X] Review calendar
+    [x] 2025-08-11 13.30: Review meeting notes
+    [ ] Shopping list
+      [5 liters] Milk
+      [2 packages] Butter
+      Vegetables
+        Tomatoes
+        Lettuce
+        Carrots
+    Learning goals
+      *Master* Ruby programming
+      Study /design patterns/
+      Practice _algorithms_
+  References and Links
+    <file:~/Documents/specs.pdf>
+    <https://example.com/documentation>
+    See also: <Project Management>
+    Previous version: <-10>
+  Complex Examples
+    2025-08-11 11.51: Meeting notes
+    State: System initialized
+    Transition: User login -> Dashboard
+    [2..5] Retry attempts allowed
+    [?] Optional configuration
+      ; This is a comment
+      Setting A = value1
+      Setting B = value2
+    Examples with parentheses and quotes
+      Meeting (scheduled for 2pm)
+      Task "Review documentation" (high priority)
+      Note: 'This is important' (see reference)
+    Conditional examples with operators
+      AND: Complete all tests AND: Deploy to production
+      OR: Use Docker OR: Use Kubernetes
+      IF: Tests pass THEN: Deploy automatically
+      NOT: Include debug logs
+      WHEN: User logged in THEN: Show dashboard
+      UNLESS: Admin privileges THEN: Deny access
+    Multi-level nesting example
+      Level 1
+        Level 2
+          Level 3
+            Level 4
+              Level 5
+                Deep nesting test
+  Markdown-style formatting
+    *Bold text example*
+    /Italic text example/
+    _Underlined text example_
+    Combined: *bold and /italic/ together*
+    Hash tags: #important #urgent #review
+
+((fold_level=3))

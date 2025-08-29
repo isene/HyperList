@@ -29,17 +29,53 @@ For historical context and the original VIM implementation, see: [hyperlist.vim]
 ### Help Screen
 ![HyperList Help](img/screenshot_help.png)
 
-## What's New in v1.2.4
+## What's New in v1.4.0
 
-### 🎯 Enhanced Item Movement & Editing
-- **Smart Item Movement**: `C-UP`/`C-DOWN` now move items past siblings at the same level
-- **Cursor Tracking**: Cursor follows moved items to their new position
-- **Auto-renumbering**: Numbered lists automatically renumber when items are moved or deleted
-- **Outdented Insert**: Press `A` to insert a new item one level less indented
-- **Quick Save & Quit**: Press `W` as a shortcut for `:wq`
-- **Configurable Indentation**: Press `I` to cycle between 2-5 spaces per indent level
-- **Auto-detect Indentation**: Automatically detects indentation from loaded files
-- **Global Settings**: Indentation preference saved in `~/.hyperlist/config.yml`
+### 🎨 Configuration Lines & Theming
+- **Configuration Lines**: Add settings at the bottom of HyperList files using `((option=value, option2=value))`
+- **Theme Support**: Three color themes - `light` (bright colors), `normal` (standard), `dark` (for light terminals)
+- **Line Wrapping**: Enable with `wrap=yes` - wrapped lines use `+` prefix per HyperList spec
+- **Line Numbers**: Enable with `show_numbers=yes`
+- **Manual Configuration**: Use `:set option=value` to change settings on the fly
+- **View Settings**: Use `:set` to see all settings, `:set option` to see one setting
+- **Auto-apply**: Settings from config lines are applied when files are loaded
+- **Invisible Config Lines**: Config lines are stored but never displayed in the editor
+- **Persistent Settings**: All `:set` commands automatically update the config line in the file
+
+### Configuration Options
+- `theme` - Color theme: light, normal, or dark
+- `wrap` - Line wrapping: yes or no
+- `show_numbers` - Show line numbers: yes or no
+- `fold_level` - Default fold level: 0-99 (0=all folded, 99=all open)
+- `auto_save` - Enable auto-save: yes or no
+- `auto_save_interval` - Auto-save frequency in seconds
+- `tab_width` - Indentation width: 2-8 spaces
+
+Example config line: `((theme=dark, wrap=yes, fold_level=2))`
+
+### Using Configuration
+
+#### Per-File Configuration
+Add a configuration line at the bottom of any HyperList file:
+```
+My HyperList
+    Item 1
+    Item 2
+
+((fold_level=2, theme=light))
+```
+
+#### Runtime Configuration
+Use `:set` commands while editing:
+```
+:set                    # Show all current settings
+:set fold_level         # Show current fold level
+:set fold_level=3       # Set fold level to 3
+:set theme=dark         # Switch to dark theme
+:set wrap=yes           # Enable line wrapping
+```
+
+All `:set` commands automatically update the file's configuration line.
 
 ## Previous Updates
 
@@ -266,9 +302,33 @@ Team Meeting 2025-08-12 14:00
 
 ## Configuration
 
+### Application Configuration
 The application stores configuration in `~/.hyperlist/`:
 - `recent_files.txt` - List of recently opened files
 - `marks.yml` - Saved marks across sessions
+- `command_history` - Command history for `:` commands
+- `templates/` - User-defined templates
+
+### Per-File Configuration
+Each HyperList file can have its own configuration line at the bottom:
+```
+((option=value, option2=value))
+```
+
+This configuration line is:
+- Automatically applied when the file is loaded
+- Updated when you use `:set` commands
+- Invisible in the editor (not displayed as content)
+- Preserved when saving the file
+
+Available options:
+- `theme` - light/normal/dark
+- `wrap` - yes/no
+- `show_numbers` - yes/no
+- `fold_level` - 0-99
+- `auto_save` - yes/no
+- `auto_save_interval` - seconds
+- `tab_width` - 2-8
 
 ## Testing
 

@@ -1,6 +1,6 @@
 Gem::Specification.new do |spec|
   spec.name          = "hyperlist"
-  spec.version       = "1.3.0"
+  spec.version       = "1.4.1"
   spec.authors       = ["Geir Isene"]
   spec.email         = ["g@isene.com"]
 
