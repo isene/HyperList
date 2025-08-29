@@ -2794,13 +2794,8 @@ class HyperListApp
   end
   
   def show_help
-    begin
-      # Build help text using consistent formatting
-      help_lines = []
-      
-      # Debug logging
-      debug_log = File.open("/tmp/hyperlist_help_debug.log", "w") rescue nil
-      debug_log.puts "show_help called at #{Time.now}" if debug_log
+    # Build help text using consistent formatting
+    help_lines = []
     help_lines << " Press #{"?".fg("10")} for full documentation, #{"UP/DOWN".fg("10")} to scroll, or any other key to return"
     help_lines << ""
     help_lines << "#{"HYPERLIST KEY BINDINGS".b}"
@@ -2859,27 +2854,11 @@ class HyperListApp
     help_lines << help_line("#{":dt".fg("10")}", "Delete template", "#{":lt".fg("10")}", "List user templates")
     help_lines << ""
     
-    # Try adding CONFIGURATION section with error handling
-    begin
-      debug_log.puts "Starting CONFIGURATION section" if debug_log
-      help_lines << "#{"CONFIGURATION".fg("14")}"
-      debug_log.puts "Added CONFIGURATION header" if debug_log
-      
-      line1 = help_line("#{":set".fg("10")}", "Show all settings", "#{":set option".fg("10")}", "Show option value")
-      debug_log.puts "Line1: #{line1.inspect}" if debug_log
-      help_lines << line1
-      
-      line2 = help_line("#{":set option=val".fg("10")}", "Set option")
-      debug_log.puts "Line2: #{line2.inspect}" if debug_log
-      help_lines << line2
-      
-      help_lines << ""
-      debug_log.puts "CONFIGURATION section complete" if debug_log
-    rescue => e
-      debug_log.puts "Error in CONFIGURATION: #{e.message}" if debug_log
-      debug_log.puts e.backtrace.join("\n") if debug_log
-      # Fall through and continue without config section
-    end
+    # CONFIGURATION section removed - was causing crashes
+    # help_lines << "#{"CONFIGURATION".fg("14")}"
+    # help_lines << help_line("#{":set".fg("10")}", "Show all settings", "#{":set option".fg("10")}", "Show option value")
+    # help_lines << help_line("#{":set option=val".fg("10")}", "Set option")
+    # help_lines << ""
     
     help_lines << "#{"HELP & QUIT".fg("14")}"
     help_lines << help_line("#{"?".fg("10")}", "This help", "#{"??".fg("10")}", "Full documentation")
@@ -2894,9 +2873,6 @@ class HyperListApp
     help_lines << help_line("#{";".fg("2")}", "Separator", "#{"#tag".fg("184")}", "Hash tags")
     
     help = help_lines.join("\n")
-    
-    debug_log.puts "Help generation complete, #{help_lines.length} lines" if debug_log
-    debug_log.close if debug_log
     
     # Store current state
     saved_items = @items.dup
@@ -2951,18 +2927,6 @@ class HyperListApp
     @current = saved_current
     @offset = saved_offset
     @modified = saved_modified
-    
-    rescue => e
-      # Log the error and show a simple message
-      File.open("/tmp/hyperlist_help_crash.log", "w") do |f|
-        f.puts "Help crashed at #{Time.now}"
-        f.puts "Error: #{e.message}"
-        f.puts "Backtrace:"
-        f.puts e.backtrace.join("\n")
-      end rescue nil
-      
-      @message = "Help error logged to /tmp/hyperlist_help_crash.log"
-    end
   end
   
   def show_documentation
