@@ -7,7 +7,7 @@
 # Check for help/version BEFORE loading any libraries
 if ARGV[0] == '-h' || ARGV[0] == '--help'
   puts <<~HELP
-    HyperList v1.4.2 - Terminal User Interface for HyperList files
+    HyperList v1.4.3 - Terminal User Interface for HyperList files
     
     USAGE
       hyperlist [OPTIONS] [FILE]
@@ -72,7 +72,7 @@ class HyperListApp
   include Rcurses::Input
   include Rcurses::Cursor
   
-  VERSION = "1.4.2"
+  VERSION = "1.4.3"
   
   def initialize(filename = nil)
     @filename = filename ? File.expand_path(filename) : nil
@@ -251,6 +251,28 @@ class HyperListApp
       # Skip config lines (don't add them to items)
       if line.strip =~ /^\(\(.+\)\)$/
         next
+      end
+      
+      # Check if this is a continuation line for a multi-line item
+      # According to HyperList spec: continuation lines start with space after the indent
+      is_continuation = false
+      if @items.length > 0
+        last_item = @items.last
+        # Check if previous item started with + (multi-line indicator)
+        if last_item["text"].strip.start_with?("+")
+          # For continuation lines, we expect: same indent level + one space prefix
+          # Calculate the expected spaces for a continuation line
+          expected_spaces = last_item["level"] * @indent_size + 1
+          actual_spaces = line[/^ */].length
+          
+          # Check if this matches the continuation pattern
+          if actual_spaces == expected_spaces
+            # This is a continuation line - append it to the previous item
+            continuation_text = line[expected_spaces..-1] || ""
+            last_item["text"] += "\n " + continuation_text
+            next  # Skip adding as a new item
+          end
+        end
       end
       
       # Detect level based on leading whitespace
@@ -589,7 +611,18 @@ class HyperListApp
     
     # Prepare content
     content = @items.map do |item|
-      (' ' * @indent_size) * item["level"] + item["text"]
+      # Handle multi-line items (those with embedded newlines)
+      if item["text"].include?("\n")
+        lines = item["text"].split("\n")
+        first_line = (' ' * @indent_size) * item["level"] + lines[0]
+        # Continuation lines get the same indent + space prefix
+        continuation_lines = lines[1..-1].map do |line|
+          (' ' * @indent_size) * item["level"] + line
+        end
+        [first_line, *continuation_lines].join("\n")
+      else
+        (' ' * @indent_size) * item["level"] + item["text"]
+      end
     end.join("\n")
     
     # Append config line if present
@@ -935,7 +968,16 @@ class HyperListApp
       if first_line
         # First line gets the multi-line indicator if needed
         if remaining.length <= effective_width
-          wrapped << (has_plus || wrapped.any? ? "+ #{remaining}" : remaining)
+          # If line already had +, it was removed earlier, so we add it back
+          # If line didn't have + but needs wrapping (wrapped.any?), add +
+          # Otherwise, leave as is
+          if has_plus
+            wrapped << "+ #{remaining}"
+          elsif wrapped.any?
+            wrapped << "+ #{remaining}"
+          else
+            wrapped << remaining
+          end
           break
         else
           # Find a good break point (prefer spaces)
@@ -971,14 +1013,28 @@ class HyperListApp
     in_literal_block = false
     literal_start_level = -1
     
+    # Track which line number each item starts at (for scroll calculation)
+    item_line_starts = {}
+    
     visible_items.each_with_index do |item, idx|
       next unless item
       
-      # Handle line wrapping if enabled
-      if @wrap
-        text_lines = wrap_line(item["text"], @cols, item["level"])
-      else
-        text_lines = [item["text"]]
+      # Record where this item starts in the display
+      item_line_starts[idx] = lines.length
+      
+      # Handle line wrapping and multi-line items
+      # First, split by embedded newlines (from multi-line items with + indicator)
+      embedded_lines = item["text"].split("\n")
+      text_lines = []
+      
+      embedded_lines.each do |embedded_line|
+        if @wrap
+          # Wrap each embedded line separately
+          wrapped = wrap_line(embedded_line, @cols, item["level"])
+          text_lines.concat(wrapped)
+        else
+          text_lines << embedded_line
+        end
       end
       
       text_lines.each_with_index do |text_line, line_idx|
@@ -1087,23 +1143,26 @@ class HyperListApp
       end
     end
     
-    # Calculate scroll position exactly like RTFM does, but account for wrapping
-    # Treat the content as having one extra line (the blank line at bottom)
+    # Calculate scroll position based on actual line positions, not item indices
+    # The current item starts at line item_line_starts[@current]
     scrolloff = 3
-    total = visible_items.length + 1  # +1 for the blank line
-    page = @main.h
+    total_lines = lines.length  # Total number of actual display lines
+    page = @main.h  # Height of the display area
     
-    if total <= page
+    # Get the actual line where the current item starts
+    current_line = item_line_starts[@current] || 0
+    
+    if total_lines <= page
       # If everything fits, always start from the very top
       @main.ix = 0
-    elsif @current - @main.ix < scrolloff
+    elsif current_line - @main.ix < scrolloff
       # If we're too close to the top of the pane, scroll up
-      @main.ix = [@current - scrolloff, 0].max
-    elsif (@main.ix + page - 1 - @current) < scrolloff
+      @main.ix = [current_line - scrolloff, 0].max
+    elsif (@main.ix + page - 1 - current_line) < scrolloff
       # If we're too close to the bottom of the pane, scroll down
-      # Account for wrapped lines dynamically
-      max_off = [total - page + extra_wrapped_lines, 0].max
-      @main.ix = [@current + scrolloff - page + 1, max_off].min
+      # Make sure we don't scroll past the last line
+      max_scroll = [total_lines - page, 0].max
+      @main.ix = [current_line + scrolloff - page + 1, max_scroll].min
     end
     
     @main.refresh
@@ -4874,46 +4933,77 @@ class HyperListApp
     
     # Build ALL lines for the pane (like we do for main pane)
     lines = []
+    
+    # Track which line number each item starts at (for scroll calculation)
+    item_line_starts = {}
+    
     visible_items.each_with_index do |item, idx|
       next unless item
+      
+      # Record where this item starts in the display
+      item_line_starts[idx] = lines.length
       
       # Find the item's position in the original split_items array
       real_idx = @split_items.index(item)
       
-      # Add line number if enabled
-      line = ""
-      if @show_numbers
-        actual_line_number = real_idx ? real_idx + 1 : 0  # +1 for 1-based line numbers
-        line = "#{actual_line_number.to_s.rjust(4)} "
-      end
+      # Handle multi-line items (split by embedded newlines)
+      embedded_lines = item["text"].split("\n")
+      text_lines = []
       
-      line += "    " * item["level"]
-      
-      # Add fold indicator with colors
-      if real_idx && has_children_in_array?(real_idx, @split_items)
-        if item["fold"]
-          line += "▶".fg("245") + " "
+      embedded_lines.each do |embedded_line|
+        if @wrap
+          # Wrap each embedded line separately
+          wrapped = wrap_line(embedded_line, @split_pane.w - 10, item["level"])
+          text_lines.concat(wrapped)
         else
-          line += "▷".fg("245") + " "
+          text_lines << embedded_line
         end
-      else
-        line += "  "
       end
       
-      # Apply process_text for syntax highlighting
-      processed = process_text(item["text"], false)
-      line += processed
-      
-      # Apply background highlighting for current item in split pane
-      if idx == @split_current
-        # Choose background color based on whether this is the active pane
-        bg_color = @active_pane == :split ? "237" : "234"
-        bg_code = "\e[48;5;#{bg_color}m"
-        reset_bg = "\e[49m"
-        line = bg_code + line.gsub(/\e\[49m/, '') + reset_bg
+      text_lines.each_with_index do |text_line, line_idx|
+        # Add line number if enabled (only on first line)
+        line = ""
+        if @show_numbers
+          if line_idx == 0
+            actual_line_number = real_idx ? real_idx + 1 : 0  # +1 for 1-based line numbers
+            line = "#{actual_line_number.to_s.rjust(4)} "
+          else
+            line = "     "  # Empty space for continuation lines
+          end
+        end
+        
+        line += "    " * item["level"]
+        
+        # Add fold indicator with colors (only on first line)
+        if line_idx == 0
+          if real_idx && has_children_in_array?(real_idx, @split_items)
+            if item["fold"]
+              line += "▶".fg("245") + " "
+            else
+              line += "▷".fg("245") + " "
+            end
+          else
+            line += "  "
+          end
+        else
+          line += "  "  # Just spacing for continuation lines
+        end
+        
+        # Apply process_text for syntax highlighting
+        processed = process_text(text_line, false)
+        line += processed
+        
+        # Apply background highlighting for current item in split pane (all lines)
+        if idx == @split_current
+          # Choose background color based on whether this is the active pane
+          bg_color = @active_pane == :split ? "237" : "234"
+          bg_code = "\e[48;5;#{bg_color}m"
+          reset_bg = "\e[49m"
+          line = bg_code + line.gsub(/\e\[49m/, '') + reset_bg
+        end
+        
+        lines << line
       end
-      
-      lines << line
     end
     
     # Add a blank line at the bottom to show end of document
@@ -4934,22 +5024,25 @@ class HyperListApp
       end
     end
     
-    # Calculate scroll position exactly like RTFM does, but account for wrapping
+    # Calculate scroll position based on actual line positions, not item indices
     scrolloff = 3
-    total = visible_items.length + 1  # +1 for the blank line
-    page = @split_pane.h
+    total_lines = lines.length  # Total number of actual display lines
+    page = @split_pane.h  # Height of the display area
     
-    if total <= page
+    # Get the actual line where the current item starts
+    current_line = item_line_starts[@split_current] || 0
+    
+    if total_lines <= page
       # If everything fits, always start from the very top
       @split_pane.ix = 0
-    elsif @split_current - @split_pane.ix < scrolloff
+    elsif current_line - @split_pane.ix < scrolloff
       # If we're too close to the top of the pane, scroll up
-      @split_pane.ix = [@split_current - scrolloff, 0].max
-    elsif (@split_pane.ix + page - 1 - @split_current) < scrolloff
+      @split_pane.ix = [current_line - scrolloff, 0].max
+    elsif (@split_pane.ix + page - 1 - current_line) < scrolloff
       # If we're too close to the bottom of the pane, scroll down
-      # Account for wrapped lines dynamically
-      max_off = [total - page + extra_wrapped_lines, 0].max
-      @split_pane.ix = [@split_current + scrolloff - page + 1, max_off].min
+      # Make sure we don't scroll past the last line
+      max_scroll = [total_lines - page, 0].max
+      @split_pane.ix = [current_line + scrolloff - page + 1, max_scroll].min
     end
     
     @split_pane.refresh

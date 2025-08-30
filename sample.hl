@@ -81,5 +81,29 @@ HyperList Sample Document
     _Underlined text example_
     Combined: *bold and /italic/ together*
     Hash tags: #important #urgent #review
+  Multi-line Items (HyperList spec)
+    + This is a multi-line item that continues
+     on the next line with a space prefix
+    + Items with the plus sign can span multiple lines
+     making it easy to write longer descriptions
+     without creating separate items
+    Consistency Rule Example
+      1 When one item at a level has a starter (identifier)
+       all items at that level need starters
+      2 This second item also needs an identifier
+      + Or you can use a plus sign as starter
+    Nested Multi-line Items  
+      + Parent item that spans multiple lines
+       with detailed information on the first level
+        + Child item also spanning multiple lines
+         providing more specific details
+        Regular child item after multi-line
+    Real-world Examples
+      + Meeting notes from project kickoff: Discussed timeline,
+       budget constraints, resource allocation, and identified
+       key stakeholders who need to be involved
+      + Action item: Research competitive solutions in the market,
+       compile findings into a report, and present recommendations
+       to the management team by end of month
 
 ((fold_level=3))
