@@ -29,7 +29,19 @@ For historical context and the original VIM implementation, see: [hyperlist.vim]
 ### Help Screen
 ![HyperList Help](img/screenshot_help.png)
 
-## What's New in v1.4.0
+## What's New in v1.4.4
+
+### 🔧 Case Conversion Commands
+- **`gU`**: Convert current line to UPPERCASE
+- **`gu`**: Convert current line to lowercase
+- Works with all HyperList elements (checkboxes, operators, etc.)
+
+### 🐛 Bug Fixes
+- Fixed color code display issues with numbered lists and operators
+- Improved handling of qualifiers like `[? conditional]`
+- Better coloring when combining numbered lists with operators (e.g., `1. NOT: item`)
+
+## Previous Version Features (v1.4.0)
 
 ### 🎨 Configuration Lines & Theming
 - **Configuration Lines**: Add settings at the bottom of HyperList files using `((option=value, option2=value))`
