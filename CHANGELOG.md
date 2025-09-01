@@ -2,6 +2,27 @@
 
 All notable changes to the HyperList Ruby TUI will be documented in this file.
 
+## [1.4.4] - 2025-09-01
+
+### Added
+- **Case conversion commands**
+  - `gU` to convert current line to UPPERCASE
+  - `gu` to convert current line to lowercase
+  - Works with all HyperList elements (checkboxes, operators, etc.)
+
+### Fixed
+- **Color code display issues**
+  - Fixed bracket content extraction in safe_regex_replace to preserve qualifier text
+  - Updated operator regex pattern to match after ANSI placeholders
+  - Both numbered lists (1.) and operators (NOT:) now color correctly when combined
+
+## [1.4.3] - 2025-08-30
+
+### Fixed
+- **Multi-line item handling**
+  - Proper handling of multi-line items per HyperList specification
+  - Fixed display and editing of items with embedded newlines
+
 ## [1.4.2] - 2025-08-29
 
 ### Fixed

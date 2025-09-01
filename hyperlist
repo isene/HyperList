@@ -72,7 +72,7 @@ class HyperListApp
   include Rcurses::Input
   include Rcurses::Cursor
   
-  VERSION = "1.4.3"
+  VERSION = "1.4.4"
   
   def initialize(filename = nil)
     @filename = filename ? File.expand_path(filename) : nil
@@ -2343,6 +2343,34 @@ class HyperListApp
     clear_cache  # Clear cache when content changes
   end
   
+  def uppercase_line
+    visible = get_visible_items
+    return if @current >= visible.length
+    
+    item = visible[@current]
+    real_idx = get_real_index(item)
+    
+    save_undo_state  # Save state before modification
+    @items[real_idx]["text"] = item["text"].upcase
+    @modified = true
+    clear_cache  # Clear cache when content changes
+    @message = "Line converted to uppercase"
+  end
+  
+  def lowercase_line
+    visible = get_visible_items
+    return if @current >= visible.length
+    
+    item = visible[@current]
+    real_idx = get_real_index(item)
+    
+    save_undo_state  # Save state before modification
+    @items[real_idx]["text"] = item["text"].downcase
+    @modified = true
+    clear_cache  # Clear cache when content changes
+    @message = "Line converted to lowercase"
+  end
+  
   def delete_line(with_children = false)
     visible = get_visible_items
     return if visible.empty?
@@ -2892,6 +2920,7 @@ class HyperListApp
     help_lines << help_line("#{"i/Enter".fg("10")}", "Edit line", "#{"o".fg("10")}", "Insert line below")
     help_lines << help_line("#{"O".fg("10")}", "Insert line above", "#{"a".fg("10")}", "Insert child")
     help_lines << help_line("#{"A".fg("10")}", "Insert outdented", "#{"W".fg("10")}", "Save and quit")
+    help_lines << help_line("#{"gU".fg("10")}", "Uppercase line", "#{"gu".fg("10")}", "Lowercase line")
     help_lines << help_line("#{"I".fg("10")}", "Cycle indent (2-5)")
     help_lines << help_line("#{"D".fg("10")}", "Delete+yank line", "#{"C-D".fg("10")}", "Delete+yank item&descendants")
     help_lines << help_line("#{"y".fg("10")}" + "/".fg("10") + "#{"Y".fg("10")}", "Copy line/tree", "#{"p".fg("10")}", "Paste")
@@ -5622,13 +5651,21 @@ class HyperListApp
             @current = [visible.length - 1, 0].max
             update_presentation_focus if @presentation_mode
           end
-        when "g"  # Go to top (was gg)
-          if @split_view && @active_pane == :split
-            @split_current = 0
-          else
-            @current = 0
-            @offset = 0
-            update_presentation_focus if @presentation_mode
+        when "g"  # Go to top (gg) or text case commands (gU/gu)
+          next_c = getchr
+          case next_c
+          when "g"  # gg - go to top
+            if @split_view && @active_pane == :split
+              @split_current = 0
+            else
+              @current = 0
+              @offset = 0
+              update_presentation_focus if @presentation_mode
+            end
+          when "U"  # gU - uppercase line
+            uppercase_line
+          when "u"  # gu - lowercase line
+            lowercase_line
           end
         when "G"  # Go to bottom
           if @split_view && @active_pane == :split
