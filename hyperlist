@@ -1337,7 +1337,10 @@ class HyperListApp
     elsif !processed_checkbox
       # Only handle other qualifiers if we didn't process a checkbox
       # Based on hyperlist.vim: '\[.\{-}\]'
-      result.gsub!(/\[([^\]]*)\]/) { "[#{$1}]".fg(colors["green"]) }  # Green for all qualifiers
+      result = safe_regex_replace(result, /\[([^\]]*)\]/) do |match|
+        content = match[1..-2]  # Extract content between brackets
+        "[#{content}]".fg(colors["green"])  # Green for all qualifiers
+      end
     end
     
     # We'll handle parentheses AFTER operators/properties to avoid conflicts
@@ -1351,21 +1354,27 @@ class HyperListApp
     # Handle operators and properties with colon pattern
     # Operators: ALL-CAPS followed by colon (with or without space)
     # Properties: Mixed case followed by colon and space
-    result.gsub!(/(\A|\s+)([a-zA-Z][a-zA-Z0-9_\-() .\/=]*):(\s*)/) do
-      prefix_space = $1
-      text_part = $2
-      space_after = $3 || ""
-      colon_space = ":#{space_after}"
-      
-      # Check if it's an operator (ALL-CAPS with optional _, -, (), /, =, spaces)
-      if text_part =~ /^[A-Z][A-Z_\-() \/=]*$/
-        prefix_space + text_part.fg(colors["blue"]) + colon_space.fg(colors["blue"])  # Blue for operators (including S: and T:)
-      elsif text_part.length >= 2 && space_after.include?(" ")
-        # It's a property (mixed case, at least 2 chars, has space after colon)
-        prefix_space + text_part.fg(colors["red"]) + colon_space.fg(colors["red"])  # Red for properties
+    # Modified pattern to also match after ANSI placeholders (⟨ANSI\d+⟩)
+    result = safe_regex_replace(result, /(\A|\s+|⟨ANSI\d+⟩)([a-zA-Z][a-zA-Z0-9_\-() .\/=]*):(\s*)/) do |match|
+      # Extract parts from the match
+      if match =~ /(\A|\s+|⟨ANSI\d+⟩)([a-zA-Z][a-zA-Z0-9_\-() .\/=]*):(\s*)/
+        prefix_space = $1
+        text_part = $2
+        space_after = $3 || ""
+        colon_space = ":#{space_after}"
+        
+        # Check if it's an operator (ALL-CAPS with optional _, -, (), /, =, spaces)
+        if text_part =~ /^[A-Z][A-Z_\-() \/=]*$/
+          prefix_space + text_part.fg(colors["blue"]) + colon_space.fg(colors["blue"])  # Blue for operators (including S: and T:)
+        elsif text_part.length >= 2 && space_after.include?(" ")
+          # It's a property (mixed case, at least 2 chars, has space after colon)
+          prefix_space + text_part.fg(colors["red"]) + colon_space.fg(colors["red"])  # Red for properties
+        else
+          # Leave as is
+          match
+        end
       else
-        # Leave as is
-        prefix_space + text_part + colon_space
+        match
       end
     end
     
