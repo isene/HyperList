@@ -138,6 +138,9 @@ class HyperListApp
     # Debug: uncomment to see terminal size
     # puts "Terminal size: #{@rows}x#{@cols}"
     
+    # Setup terminal resize handler
+    setup_resize_handler
+    
     # Setup UI first (to initialize @footer) before loading file
     setup_ui
     
@@ -192,6 +195,33 @@ class HyperListApp
       # Footer: Use @rows for y-position (this puts it at the actual bottom)
       @footer = Pane.new(1, @rows, @cols, 1, 15, 8)
     end
+  end
+  
+  def setup_resize_handler
+    # Catch terminal resize signal
+    Signal.trap('WINCH') do
+      refresh_on_resize
+    end
+  rescue
+    # Ignore if signal handling not available on this platform
+  end
+  
+  def refresh_on_resize
+    # Get new terminal dimensions
+    if IO.console
+      @rows, @cols = IO.console.winsize
+    else
+      @rows = ENV['LINES']&.to_i || 24
+      @cols = ENV['COLUMNS']&.to_i || 80
+    end
+    
+    # Reinitialize UI with new dimensions
+    setup_ui
+    
+    # Force full redraw
+    render
+  rescue
+    # Ignore errors during resize to prevent crashes
   end
   
   def load_file(file)
