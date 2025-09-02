@@ -2,6 +2,15 @@
 
 All notable changes to the HyperList Ruby TUI will be documented in this file.
 
+## [1.4.5] - 2025-09-02
+
+### Added
+- **Terminal resize handling**
+  - Implemented Signal.trap('WINCH') to catch terminal resize events
+  - Application now properly adapts when terminal window is resized
+  - UI components (panes) automatically adjust to new dimensions
+  - Follows same pattern as RTFM for robust resize handling
+
 ## [1.4.4] - 2025-09-01
 
 ### Added
