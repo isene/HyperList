@@ -1477,6 +1477,11 @@ class HyperListApp
   end
   
   def render_footer
+    # Don't overwrite footer if showing password prompt
+    if @footer && @footer.text && @footer.text.include?("password")
+      return
+    end
+    
     version_text = "v#{VERSION}"
     
     if @mode == :command
@@ -3978,6 +3983,20 @@ class HyperListApp
   def prompt_password(prompt = "Password: ")
     @footer.text = prompt
     @footer.refresh
+    
+    # Force terminal to flush output - needed when launched from urxvt
+    STDOUT.flush
+    
+    # When launched through urxvt, force a complete redraw
+    if ENV['TERM'] =~ /rxvt/
+      sleep 0.1
+      # Force complete screen refresh
+      Rcurses.clear_screen
+      setup_ui
+      @footer.text = prompt
+      @footer.refresh
+      STDOUT.flush
+    end
     
     password = ""
     loop do
