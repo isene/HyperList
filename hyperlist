@@ -72,7 +72,7 @@ class HyperListApp
   include Rcurses::Input
   include Rcurses::Cursor
   
-  VERSION = "1.4.5"
+  VERSION = "1.5.0"
   
   def initialize(filename = nil)
     @filename = filename ? File.expand_path(filename) : nil
