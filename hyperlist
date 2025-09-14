@@ -7,7 +7,7 @@
 # Check for help/version BEFORE loading any libraries
 if ARGV[0] == '-h' || ARGV[0] == '--help'
   puts <<~HELP
-    HyperList v1.4.3 - Terminal User Interface for HyperList files
+    HyperList v1.5.1 - Terminal User Interface for HyperList files
     
     USAGE
       hyperlist [OPTIONS] [FILE]
@@ -52,7 +52,7 @@ if ARGV[0] == '-h' || ARGV[0] == '--help'
   HELP
   exit 0
 elsif ARGV[0] == '-v' || ARGV[0] == '--version'
-  puts "HyperList v1.4.0"
+  puts "HyperList v1.5.1"
   exit 0
 end
 
@@ -72,7 +72,7 @@ class HyperListApp
   include Rcurses::Input
   include Rcurses::Cursor
   
-  VERSION = "1.5.0"
+  VERSION = "1.5.1"
   
   def initialize(filename = nil)
     @filename = filename ? File.expand_path(filename) : nil
@@ -135,9 +135,6 @@ class HyperListApp
       @cols = ENV['COLUMNS']&.to_i || 80
     end
     
-    # Debug: uncomment to see terminal size
-    # puts "Terminal size: #{@rows}x#{@cols}"
-    
     # Setup terminal resize handler
     setup_resize_handler
     
@@ -175,9 +172,8 @@ class HyperListApp
       # This is how RTFM works - it passes colored command output to panes with nil colors
       @main = Pane.new(1, 1, split_width - 1, @rows - 1, nil, nil)
       @split_pane = Pane.new(split_width + 1, 1, split_width - 1, @rows - 1, nil, nil)
-      # Footer: Use @rows for y-position (this puts it at the actual bottom)
       @footer = Pane.new(1, @rows, @cols, 1, 15, 8)
-      
+
       # Add separator with explicit background to overwrite emoji overflow
       @separator = Pane.new(split_width, 1, 1, @rows - 1, 15, 0)
       # Build separator with explicit clearing
@@ -192,7 +188,6 @@ class HyperListApp
       # Use nil colors like RTFM to avoid ANSI wrapping issues
       # This prevents the corruption that happens with narrow terminals
       @main = Pane.new(1, 1, @cols, @rows - 1, nil, nil)
-      # Footer: Use @rows for y-position (this puts it at the actual bottom)
       @footer = Pane.new(1, @rows, @cols, 1, 15, 8)
     end
   end
@@ -661,7 +656,6 @@ class HyperListApp
       content += "\n" unless content.end_with?("\n")
       content += "\n" + @config_line
     else
-      # Debug: Check why config line is missing
       if @fold_level != 99
         # Rebuild config line if we have config settings but no line
         update_config_line
@@ -1604,16 +1598,32 @@ class HyperListApp
   def has_children?(idx, items)
     return false if idx >= items.length - 1
     return false if idx < 0
-    
+
     current_item = items[idx]
     next_item = items[idx + 1]
-    
+
     # For visible items array
     if current_item.is_a?(Hash) && next_item.is_a?(Hash)
       return next_item["level"] > current_item["level"]
     end
-    
+
     false
+  end
+
+  def get_last_descendant_index(idx, items)
+    # Find the index after the last descendant of item at idx
+    # Returns idx + 1 if no children
+    return idx + 1 if idx >= items.length - 1
+    return idx + 1 unless has_children?(idx, items)
+
+    current_level = items[idx]["level"]
+    last_idx = idx + 1
+
+    while last_idx < items.length && items[last_idx]["level"] > current_level
+      last_idx += 1
+    end
+
+    last_idx
   end
   
   def indent_split_right(with_children = false)
@@ -2251,13 +2261,21 @@ class HyperListApp
   
   def insert_line_with_text(text)
     return unless text && !text.strip.empty?
-    
+
     save_undo_state  # Save state before modification
     visible = get_visible_items
     if @current < visible.length
       level = visible[@current]["level"]
       real_idx = get_real_index(visible[@current])
-      @items.insert(real_idx + 1, {"text" => text, "level" => level, "fold" => false})
+
+      # If current item has collapsed children, insert after all descendants
+      if @items[real_idx]["fold"] && has_children?(real_idx, @items)
+        insert_idx = get_last_descendant_index(real_idx, @items)
+      else
+        insert_idx = real_idx + 1
+      end
+
+      @items.insert(insert_idx, {"text" => text, "level" => level, "fold" => false})
     else
       @items << {"text" => text, "level" => 0, "fold" => false}
     end
@@ -2297,17 +2315,26 @@ class HyperListApp
   
   def insert_child_with_text(text)
     return unless text && !text.strip.empty?
-    
+
     save_undo_state  # Save state before modification
     visible = get_visible_items
     if @current < visible.length
       level = visible[@current]["level"] + 1
       real_idx = get_real_index(visible[@current])
-      
+
+      # If current item has collapsed children, insert as last child
+      if @items[real_idx]["fold"] && has_children?(real_idx, @items)
+        # Insert just before the next sibling (at the end of all descendants)
+        insert_idx = get_last_descendant_index(real_idx, @items)
+      else
+        # No collapsed children, insert right after current item
+        insert_idx = real_idx + 1
+      end
+
       # Unfold parent if needed
       @items[real_idx]["fold"] = false
-      
-      @items.insert(real_idx + 1, {"text" => text, "level" => level, "fold" => false})
+
+      @items.insert(insert_idx, {"text" => text, "level" => level, "fold" => false})
     else
       @items << {"text" => text, "level" => 1, "fold" => false}
     end
@@ -4003,13 +4030,6 @@ class HyperListApp
       begin
         c = getchr
         
-        # Debug logging
-        if ENV['DEBUG']
-          File.open('/tmp/hyperlist_debug.log', 'a') do |f|
-            f.puts "Password prompt key: #{c.inspect}"
-          end
-        end
-        
         case c
         when "ENTER", "\r", "\n"
           break
@@ -4675,11 +4695,6 @@ class HyperListApp
         
         # Skip truly nil input
         next if c.nil?
-        
-        # Debug logging to file
-        File.open('/tmp/hyperlist_debug.log', 'a') do |f|
-          f.puts "Template key received: #{c.inspect} (length: #{c.length}, ord: #{c.bytes.inspect})"
-        end if ENV['DEBUG']
         
         case c
         when "q", "ESC", "C-c", "Q"
