@@ -1610,6 +1610,30 @@ class HyperListApp
     false
   end
 
+  def should_move_with_children?
+    if @split_view && @active_pane == :split
+      # Handle split pane
+      visible_items = get_visible_split_items
+      return false if @split_current >= visible_items.length
+
+      item = visible_items[@split_current]
+      real_idx = @split_items.index(item)
+
+      # Move with children only if item is folded (collapsed) and has children
+      return real_idx && has_children_in_array?(real_idx, @split_items) && item["fold"]
+    else
+      # Handle main pane
+      visible = get_visible_items
+      return false if @current >= visible.length
+
+      item = visible[@current]
+      real_idx = get_real_index(item)
+
+      # Move with children only if item is folded (collapsed) and has children
+      return real_idx && has_children?(real_idx, @items) && @items[real_idx]["fold"]
+    end
+  end
+
   def get_last_descendant_index(idx, items)
     # Find the index after the last descendant of item at idx
     # Returns idx + 1 if no children
@@ -4883,16 +4907,20 @@ class HyperListApp
         indent_left(true)  # with children
       end
     when "RIGHT"
+      # Move collapsed trees as a unit, but only the item if uncollapsed
+      should_move_children = should_move_with_children?
       if @split_view && @active_pane == :split
-        indent_split_right(false)
+        indent_split_right(should_move_children)
       else
-        indent_right(false)
+        indent_right(should_move_children)
       end
     when "LEFT"
+      # Move collapsed trees as a unit, but only the item if uncollapsed
+      should_move_children = should_move_with_children?
       if @split_view && @active_pane == :split
-        indent_split_left(false)
+        indent_split_left(should_move_children)
       else
-        indent_left(false)
+        indent_left(should_move_children)
       end
     when " "
       toggle_fold
@@ -5681,18 +5709,20 @@ class HyperListApp
         when "l"
           go_to_first_child
         when "LEFT"
-          # Unindent only the current item
+          # Move collapsed trees as a unit, but only the item if uncollapsed
+          should_move_children = should_move_with_children?
           if @split_view && @active_pane == :split
-            indent_split_left(false)
+            indent_split_left(should_move_children)
           else
-            indent_left(false)
+            indent_left(should_move_children)
           end
         when "RIGHT"
-          # Indent only the current item
+          # Move collapsed trees as a unit, but only the item if uncollapsed
+          should_move_children = should_move_with_children?
           if @split_view && @active_pane == :split
-            indent_split_right(false)
+            indent_split_right(should_move_children)
           else
-            indent_right(false)
+            indent_right(should_move_children)
           end
         when "PgUP"  # Page Up
           page_up

@@ -2,6 +2,15 @@
 
 All notable changes to the HyperList Ruby TUI will be documented in this file.
 
+## [1.5.2] - 2025-09-18
+
+### Enhanced
+- **Smart movement behavior for collapsed items**
+  - LEFT/RIGHT arrow keys now move collapsed trees as a unit when item is folded
+  - Uncollapsed items move individually (only the current item)
+  - Maintains "move what's visible" principle for intuitive navigation
+  - Works in both normal and split-view modes
+
 ## [1.4.5] - 2025-09-02
 
 ### Added
