@@ -2,11 +2,22 @@
 
 All notable changes to the HyperList Ruby TUI will be documented in this file.
 
+## [1.6.0] - 2025-09-18
+
+### BREAKING CHANGES
+- **Complete reassignment of arrow key functionality**
+  - **RIGHT key**: Now uncollapses items (if collapsed)
+  - **LEFT key**: Now collapses items (if they have children)
+  - **TAB key**: Takes over old RIGHT key functionality (indent right)
+  - **S-TAB key**: Takes over old LEFT key functionality (indent left)
+  - This provides more intuitive navigation where arrow keys control visibility and TAB keys control indentation
+  - Updated help documentation to reflect new key mappings
+
 ## [1.5.2] - 2025-09-18
 
 ### Enhanced
 - **Smart movement behavior for collapsed items**
-  - LEFT/RIGHT arrow keys now move collapsed trees as a unit when item is folded
+  - LEFT/RIGHT arrow keys move collapsed trees as a unit when item is folded
   - Uncollapsed items move individually (only the current item)
   - Maintains "move what's visible" principle for intuitive navigation
   - Works in both normal and split-view modes

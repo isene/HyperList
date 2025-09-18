@@ -3068,8 +3068,8 @@ class HyperListApp
     help_lines << help_line("#{"r".fg("10")}" + ", ".fg("10") + "#{"C-R".fg("10")}", "Redo")
     help_lines << help_line("#{"S-UP".fg("10")}", "Move item up", "#{"S-DOWN".fg("10")}", "Move item down")
     help_lines << help_line("#{"C-UP".fg("10")}", "Move item&descendants up", "#{"C-DOWN".fg("10")}", "Move item&descendants down")
+    help_lines << help_line("#{"→".fg("10")}", "Uncollapse item", "#{"←".fg("10")}", "Collapse item")
     help_lines << help_line("#{"Tab".fg("10")}", "Indent item+kids", "#{"S-Tab".fg("10")}", "Unindent item+kids")
-    help_lines << help_line("#{"→".fg("10")}", "Indent item only", "#{"←".fg("10")}", "Unindent item only")
     help_lines << ""
     help_lines << "#{"SPECIAL FEATURES".fg("14")}"
     help_lines << help_line("#{"v".fg("10")}", "Toggle checkbox", "#{"V".fg("10")}", "Checkbox with date")
