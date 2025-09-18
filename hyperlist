@@ -72,7 +72,7 @@ class HyperListApp
   include Rcurses::Input
   include Rcurses::Cursor
   
-  VERSION = "1.5.1"
+  VERSION = "1.6.0"
   
   def initialize(filename = nil)
     @filename = filename ? File.expand_path(filename) : nil
@@ -1733,7 +1733,61 @@ class HyperListApp
       end
     end
   end
-  
+
+  def collapse_item
+    if @split_view && @active_pane == :split
+      # Handle collapse in split pane
+      visible_items = get_visible_split_items
+      return if @split_current >= visible_items.length
+
+      item = visible_items[@split_current]
+      real_idx = @split_items.index(item)
+
+      if real_idx && has_children_in_array?(real_idx, @split_items) && !item["fold"]
+        item["fold"] = true
+      end
+    else
+      # Handle collapse in main pane
+      visible = get_visible_items
+      return if @current >= visible.length
+
+      item = visible[@current]
+      real_idx = get_real_index(item)
+
+      if real_idx && has_children?(real_idx, @items) && !@items[real_idx]["fold"]
+        @items[real_idx]["fold"] = true
+        record_last_action(:toggle_fold, nil)
+      end
+    end
+  end
+
+  def uncollapse_item
+    if @split_view && @active_pane == :split
+      # Handle uncollapse in split pane
+      visible_items = get_visible_split_items
+      return if @split_current >= visible_items.length
+
+      item = visible_items[@split_current]
+      real_idx = @split_items.index(item)
+
+      if real_idx && has_children_in_array?(real_idx, @split_items) && item["fold"]
+        item["fold"] = false
+      end
+    else
+      # Handle uncollapse in main pane
+      visible = get_visible_items
+      return if @current >= visible.length
+
+      item = visible[@current]
+      real_idx = get_real_index(item)
+
+      if real_idx && has_children?(real_idx, @items) && @items[real_idx]["fold"]
+        @items[real_idx]["fold"] = false
+        record_last_action(:toggle_fold, nil)
+      end
+    end
+  end
+
   def move_up
     if @presentation_mode
       # In presentation mode, we need to handle navigation differently
@@ -4895,33 +4949,27 @@ class HyperListApp
     when "V"
       toggle_checkbox_with_date
     when "TAB"
-      if @split_view && @active_pane == :split
-        indent_split_right(true)  # with children
-      else
-        indent_right(true)  # with children
-      end
-    when "S-TAB"
-      if @split_view && @active_pane == :split
-        indent_split_left(true)  # with children
-      else
-        indent_left(true)  # with children
-      end
-    when "RIGHT"
-      # Move collapsed trees as a unit, but only the item if uncollapsed
+      # Indent with move conditions (moved from RIGHT key)
       should_move_children = should_move_with_children?
       if @split_view && @active_pane == :split
         indent_split_right(should_move_children)
       else
         indent_right(should_move_children)
       end
-    when "LEFT"
-      # Move collapsed trees as a unit, but only the item if uncollapsed
+    when "S-TAB"
+      # Unindent with move conditions (moved from LEFT key)
       should_move_children = should_move_with_children?
       if @split_view && @active_pane == :split
         indent_split_left(should_move_children)
       else
         indent_left(should_move_children)
       end
+    when "RIGHT"
+      # Uncollapse item if it is collapsed
+      uncollapse_item
+    when "LEFT"
+      # Collapse item if it has children
+      collapse_item
     when " "
       toggle_fold
     when "u"
@@ -5709,21 +5757,11 @@ class HyperListApp
         when "l"
           go_to_first_child
         when "LEFT"
-          # Move collapsed trees as a unit, but only the item if uncollapsed
-          should_move_children = should_move_with_children?
-          if @split_view && @active_pane == :split
-            indent_split_left(should_move_children)
-          else
-            indent_left(should_move_children)
-          end
+          # Collapse item if it has children
+          collapse_item
         when "RIGHT"
-          # Move collapsed trees as a unit, but only the item if uncollapsed
-          should_move_children = should_move_with_children?
-          if @split_view && @active_pane == :split
-            indent_split_right(should_move_children)
-          else
-            indent_right(should_move_children)
-          end
+          # Uncollapse item if it is collapsed
+          uncollapse_item
         when "PgUP"  # Page Up
           page_up
         when "PgDOWN"  # Page Down
@@ -5868,11 +5906,12 @@ class HyperListApp
             # In presentation mode, Tab goes to next sibling
             jump_to_next_sibling
           else
-            # Normal mode: Indent with all children
+            # Normal mode: Indent with move conditions (moved from RIGHT key)
+            should_move_children = should_move_with_children?
             if @split_view && @active_pane == :split
-              indent_split_right(true)
+              indent_split_right(should_move_children)
             else
-              indent_right(true)
+              indent_right(should_move_children)
             end
           end
         when "S-TAB"  # Shift-Tab
@@ -5880,11 +5919,12 @@ class HyperListApp
             # In presentation mode, Shift-Tab goes to previous sibling
             jump_to_prev_sibling
           else
-            # Normal mode: Unindent with all children
+            # Normal mode: Unindent with move conditions (moved from LEFT key)
+            should_move_children = should_move_with_children?
             if @split_view && @active_pane == :split
-              indent_split_left(true)
+              indent_split_left(should_move_children)
             else
-              indent_left(true)
+              indent_left(should_move_children)
             end
           end
         when "u"
