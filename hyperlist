@@ -3022,7 +3022,35 @@ class HyperListApp
     @modified = true
     record_last_action(:toggle_checkbox_with_date, nil)
   end
-  
+
+  def remove_checkbox
+    visible = get_visible_items
+    return if @current >= visible.length
+
+    save_undo_state  # Save state before modification
+
+    item = visible[@current]
+    real_idx = get_real_index(item)
+    text = @items[real_idx]["text"]
+
+    # Remove checkbox patterns: [ ], [X], [x], [O], [-], [_]
+    if text =~ /^\[[ X_Ox-]\]/
+      # Remove the checkbox and any following space
+      text = text.sub(/^\[[ X_Ox-]\]\s*/, '')
+
+      # Also remove any timestamp that might be associated with checkbox
+      # Format: YYYY-MM-DD HH.MM: or similar
+      text = text.sub(/^\d{4}-\d{2}-\d{2} \d{2}\.\d{2}:\s*/, '')
+
+      @items[real_idx]["text"] = text
+      @modified = true
+      @message = "Removed checkbox"
+      record_last_action(:remove_checkbox, nil)
+    else
+      @message = "No checkbox to remove"
+    end
+  end
+
   def search_forward
     @mode = :search
     @search = @footer.ask("Search: ", @search || "")
@@ -3165,6 +3193,7 @@ class HyperListApp
     help_lines << ""
     help_lines << "#{"SPECIAL FEATURES".fg("14")}"
     help_lines << help_line("#{"v".fg("10")}", "Toggle checkbox", "#{"V".fg("10")}", "Checkbox with date")
+    help_lines << help_line("#{"C-x".fg("10")}", "Remove checkbox", "", "")
     help_lines << help_line("#{"C-E".fg("10")}", "Encrypt/decrypt line", "#{"C-U".fg("10")}", "Toggle State/Trans underline")
     help_lines << help_line("#{"P".fg("10")}", "Presentation mode", "#{"Tab/S-Tab".fg("10")}", "Next/prev sibling (in P)")
     help_lines << help_line("#{"Ma".fg("10")}", "Record macro 'a'", "#{"@a".fg("10")}", "Play macro 'a'")
@@ -5040,6 +5069,8 @@ class HyperListApp
       toggle_checkbox
     when "V"
       toggle_checkbox_with_date
+    when "\x18"  # Ctrl-X for remove checkbox
+      remove_checkbox
     when "TAB"
       # Indent with move conditions (moved from RIGHT key)
       should_move_children = should_move_with_children?
@@ -6027,6 +6058,8 @@ class HyperListApp
           toggle_checkbox
         when "V"
           toggle_checkbox_with_date
+        when "\x18"  # Ctrl-X for remove checkbox
+          remove_checkbox
         when "."
           repeat_last_action
         when "/"
