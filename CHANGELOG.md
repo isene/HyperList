@@ -2,6 +2,16 @@
 
 All notable changes to the HyperList Ruby TUI will be documented in this file.
 
+## [1.8.0] - 2025-09-22
+
+### Enhanced
+- **Guaranteed item visibility after all movement operations**
+  - Current item now ALWAYS remains visible after TAB/S-TAB indentation operations
+  - Added visibility enforcement to `indent_right()` and `indent_left()` functions
+  - Added visibility enforcement to split-view indentation operations
+  - Prevents items from becoming invisible when moved under collapsed parents
+  - Complements existing visibility protection for C-UP/C-DOWN movements
+
 ## [1.7.0] - 2025-09-18
 
 ### Added

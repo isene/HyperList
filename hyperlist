@@ -1674,6 +1674,10 @@ class HyperListApp
         end
       end
       
+      # Ensure the moved item remains visible (find its index in main items array)
+      main_real_idx = @items.index(item)
+      force_item_visible(main_real_idx) if main_real_idx
+
       @modified = true
       @message = "Indented in split pane"
     end
@@ -1702,6 +1706,10 @@ class HyperListApp
         end
       end
       
+      # Ensure the moved item remains visible (find its index in main items array)
+      main_real_idx = @items.index(item)
+      force_item_visible(main_real_idx) if main_real_idx
+
       @modified = true
       @message = "Unindented in split pane"
     end
@@ -2918,6 +2926,9 @@ class HyperListApp
         end
       end
       
+      # Ensure the moved item remains visible
+      force_item_visible(real_idx)
+
       @modified = true
       record_last_action(:indent_right, with_children)
     end
@@ -2946,6 +2957,9 @@ class HyperListApp
         end
       end
       
+      # Ensure the moved item remains visible
+      force_item_visible(real_idx)
+
       @modified = true
       record_last_action(:indent_left, with_children)
     end
