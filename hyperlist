@@ -5935,12 +5935,12 @@ class HyperListApp
           move_item_up(false)
         when "S-DOWN"  # Move item down
           move_item_down(false)
-        when "C-UP"  # Move item and descendants up
-          move_item_up(true)
-        when "C-DOWN"  # Move item and descendants down
-          move_item_down(true)
-        when "C-K"  # Alternative: Move item and descendants up (for terminals that intercept C-UP)
-          move_item_up(true)
+        when "C-UP"  # Move up in visible list (with children only if collapsed)
+          move_item_up(should_move_with_children?)
+        when "C-DOWN"  # Move down in visible list (with children only if collapsed)
+          move_item_down(should_move_with_children?)
+        when "C-K"  # Alternative: Move up in visible list (for terminals that intercept C-UP)
+          move_item_up(should_move_with_children?)
         when "TAB"
           if @presentation_mode
             # In presentation mode, Tab goes to next sibling
