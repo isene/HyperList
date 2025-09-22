@@ -2801,21 +2801,8 @@ class HyperListApp
       end
     end
 
-    # Find where the next visible item ends (including its children)
-    next_item_end = next_real_idx
-    if next_real_idx < @items.length - 1
-      next_level = @items[next_real_idx]["level"]
-      ((next_real_idx + 1)...@items.length).each do |i|
-        if @items[i]["level"] > next_level
-          next_item_end = i
-        else
-          break
-        end
-      end
-    end
-
-    # Target is after the next item and its children
-    target_real_idx = next_item_end + 1
+    # Target is immediately after the next visible item (not after its children)
+    target_real_idx = next_real_idx + 1
 
     # Check if there are orphaned children at the target position
     # If so, position before them to reunite
