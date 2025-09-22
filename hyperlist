@@ -2664,29 +2664,26 @@ class HyperListApp
     end
   end
 
-  def ensure_item_visible(target_real_idx)
-    # Ensure the item at target_real_idx is visible by unfolding any collapsed ancestors
+  def ensure_destination_visible(target_real_idx, item_level)
+    # Unfold any collapsed areas that would hide an item at target_real_idx with item_level
     return if target_real_idx >= @items.length || target_real_idx < 0
 
-    target_item = @items[target_real_idx]
-    target_level = target_item["level"]
-
-    # Walk backwards to find all ancestor items
+    # Walk backwards from the target position to find potential ancestor items
     (target_real_idx - 1).downto(0) do |i|
       item = @items[i]
 
-      # If this item is at a higher level (lower number) than target, it's an ancestor
-      if item["level"] < target_level
-        # If this ancestor is folded, unfold it
+      # If this item is at a higher level (lower number) than our item will be, it's a potential ancestor
+      if item["level"] < item_level
+        # If this ancestor is folded, unfold it to make the destination visible
         if item["fold"] && has_children?(i, @items)
           item["fold"] = false
         end
 
-        # Update target_level to continue searching for higher ancestors
-        target_level = item["level"]
+        # Update item_level to continue searching for higher ancestors
+        item_level = item["level"]
 
         # If we reach level 0, we're done
-        break if target_level == 0
+        break if item_level == 0
       end
     end
   end
@@ -2697,19 +2694,18 @@ class HyperListApp
 
     save_undo_state  # Save state before modification
 
-    item = visible[@current]
-    real_idx = get_real_index(item)
+    current_item = visible[@current]
+    current_real_idx = get_real_index(current_item)
 
-    # Can't move if already at the beginning
-    return if real_idx == 0
+    # Get the previous visible item
+    prev_visible_item = visible[@current - 1]
+    prev_real_idx = get_real_index(prev_visible_item)
 
-    # Collect item(s) to move
-    items_to_move = [item]
-
+    # Collect items to move (current item + children if requested)
+    items_to_move = [current_item]
     if with_children
-      # Collect all children
-      level = item["level"]
-      ((real_idx + 1)...@items.length).each do |i|
+      level = current_item["level"]
+      ((current_real_idx + 1)...@items.length).each do |i|
         if @items[i]["level"] > level
           items_to_move << @items[i]
         else
@@ -2718,41 +2714,36 @@ class HyperListApp
       end
     end
 
-    # Find target position: move to just before the previous visible item
-    prev_visible_idx = @current - 1
-    prev_visible_item = visible[prev_visible_idx]
-    target_real_idx = get_real_index(prev_visible_item)
-
-    # Remove items from their current position
-    items_to_move.length.times { @items.delete_at(real_idx) }
-
-    # Adjust target index since we removed items
-    if target_real_idx > real_idx
-      target_real_idx -= items_to_move.length
-    end
-
-    # Calculate the appropriate level for the new position
-    new_level = calculate_level_for_position(target_real_idx)
+    # Calculate what level the moved item should have at the target position
+    new_level = calculate_level_for_position(prev_real_idx)
     level_diff = new_level - items_to_move.first["level"]
 
-    # Adjust levels of all moved items
+    # Unfold destination area BEFORE moving if needed
+    ensure_destination_visible(prev_real_idx, new_level)
+
+    # Remove the items to move
+    items_to_move.length.times { @items.delete_at(current_real_idx) }
+
+    # Adjust target position since we removed items after it
+    adjusted_target = prev_real_idx
+    if prev_real_idx > current_real_idx
+      adjusted_target -= items_to_move.length
+    end
+
+    # Adjust levels of moved items
     items_to_move.each do |moved_item|
       moved_item["level"] += level_diff
-      # Ensure level doesn't go negative
-      moved_item["level"] = [moved_item["level"], 0].max
+      moved_item["level"] = [moved_item["level"], 0].max  # Ensure level doesn't go negative
     end
 
-    # Insert items at the target position
+    # Insert items at target position
     items_to_move.each_with_index do |item_to_move, idx|
-      @items.insert(target_real_idx + idx, item_to_move)
+      @items.insert(adjusted_target + idx, item_to_move)
     end
 
-    # Ensure the moved item remains visible by unfolding any collapsed ancestors
-    ensure_item_visible(target_real_idx)
-
-    # Update cursor position to follow the moved item
+    # Update cursor to follow the moved item
     new_visible = get_visible_items
-    new_item_idx = new_visible.find_index { |v| get_real_index(v) == target_real_idx }
+    new_item_idx = new_visible.find_index { |v| get_real_index(v) == adjusted_target }
     @current = new_item_idx if new_item_idx
 
     @modified = true
@@ -2766,36 +2757,31 @@ class HyperListApp
 
     save_undo_state  # Save state before modification
 
-    item = visible[@current]
-    real_idx = get_real_index(item)
+    current_item = visible[@current]
+    current_real_idx = get_real_index(current_item)
 
-    # Collect item(s) to move
-    items_to_move = [item]
-    last_idx = real_idx
+    # Get the next visible item
+    next_visible_item = visible[@current + 1]
+    next_real_idx = get_real_index(next_visible_item)
 
+    # Collect items to move (current item + children if requested)
+    items_to_move = [current_item]
     if with_children
-      # Collect all children
-      level = item["level"]
-      ((real_idx + 1)...@items.length).each do |i|
+      level = current_item["level"]
+      ((current_real_idx + 1)...@items.length).each do |i|
         if @items[i]["level"] > level
           items_to_move << @items[i]
-          last_idx = i
         else
           break
         end
       end
     end
 
-    # Find target position: move to just after the next visible item
-    next_visible_idx = @current + 1
-    next_visible_item = visible[next_visible_idx]
-    next_visible_real_idx = get_real_index(next_visible_item)
-
-    # Find where the next visible item ends (including its children if any)
-    next_item_end = next_visible_real_idx
-    if next_visible_real_idx < @items.length - 1
-      next_level = @items[next_visible_real_idx]["level"]
-      ((next_visible_real_idx + 1)...@items.length).each do |i|
+    # Find where the next visible item ends (including its children)
+    next_item_end = next_real_idx
+    if next_real_idx < @items.length - 1
+      next_level = @items[next_real_idx]["level"]
+      ((next_real_idx + 1)...@items.length).each do |i|
         if @items[i]["level"] > next_level
           next_item_end = i
         else
@@ -2804,38 +2790,36 @@ class HyperListApp
       end
     end
 
+    # Target is after the next item and its children
     target_real_idx = next_item_end + 1
 
-    # Remove items from their current position
-    items_to_move.length.times { @items.delete_at(real_idx) }
-
-    # Adjust target index since we removed items
-    if target_real_idx > real_idx
-      target_real_idx -= items_to_move.length
-    end
-
-    # Calculate the appropriate level for the new position
+    # Calculate what level the moved item should have at the target position
     new_level = calculate_level_for_position(target_real_idx)
     level_diff = new_level - items_to_move.first["level"]
 
-    # Adjust levels of all moved items
+    # Unfold destination area BEFORE moving if needed
+    ensure_destination_visible(target_real_idx, new_level)
+
+    # Remove the items to move
+    items_to_move.length.times { @items.delete_at(current_real_idx) }
+
+    # Adjust target position since we removed items before it
+    adjusted_target = target_real_idx - items_to_move.length
+
+    # Adjust levels of moved items
     items_to_move.each do |moved_item|
       moved_item["level"] += level_diff
-      # Ensure level doesn't go negative
-      moved_item["level"] = [moved_item["level"], 0].max
+      moved_item["level"] = [moved_item["level"], 0].max  # Ensure level doesn't go negative
     end
 
-    # Insert items at the target position
+    # Insert items at target position
     items_to_move.each_with_index do |item_to_move, idx|
-      @items.insert(target_real_idx + idx, item_to_move)
+      @items.insert(adjusted_target + idx, item_to_move)
     end
 
-    # Ensure the moved item remains visible by unfolding any collapsed ancestors
-    ensure_item_visible(target_real_idx)
-
-    # Update cursor position to follow the moved item
+    # Update cursor to follow the moved item
     new_visible = get_visible_items
-    new_item_idx = new_visible.find_index { |v| get_real_index(v) == target_real_idx }
+    new_item_idx = new_visible.find_index { |v| get_real_index(v) == adjusted_target }
     @current = new_item_idx if new_item_idx
 
     @modified = true
