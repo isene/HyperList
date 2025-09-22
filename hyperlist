@@ -72,7 +72,7 @@ class HyperListApp
   include Rcurses::Input
   include Rcurses::Cursor
   
-  VERSION = "1.6.0"
+  VERSION = "1.7.0"
   
   def initialize(filename = nil)
     @filename = filename ? File.expand_path(filename) : nil
@@ -3193,7 +3193,7 @@ class HyperListApp
     help_lines << ""
     help_lines << "#{"SPECIAL FEATURES".fg("14")}"
     help_lines << help_line("#{"v".fg("10")}", "Toggle checkbox", "#{"V".fg("10")}", "Checkbox with date")
-    help_lines << help_line("#{"C-x".fg("10")}", "Remove checkbox", "", "")
+    help_lines << help_line("#{"C-X".fg("10")}", "Remove checkbox", "", "")
     help_lines << help_line("#{"C-E".fg("10")}", "Encrypt/decrypt line", "#{"C-U".fg("10")}", "Toggle State/Trans underline")
     help_lines << help_line("#{"P".fg("10")}", "Presentation mode", "#{"Tab/S-Tab".fg("10")}", "Next/prev sibling (in P)")
     help_lines << help_line("#{"Ma".fg("10")}", "Record macro 'a'", "#{"@a".fg("10")}", "Play macro 'a'")
@@ -5069,7 +5069,7 @@ class HyperListApp
       toggle_checkbox
     when "V"
       toggle_checkbox_with_date
-    when "\x18"  # Ctrl-X for remove checkbox
+    when "C-X"  # Ctrl-Shift-X for remove checkbox
       remove_checkbox
     when "TAB"
       # Indent with move conditions (moved from RIGHT key)
@@ -6058,7 +6058,7 @@ class HyperListApp
           toggle_checkbox
         when "V"
           toggle_checkbox_with_date
-        when "\x18"  # Ctrl-X for remove checkbox
+        when "C-X"  # Ctrl-Shift-X for remove checkbox
           remove_checkbox
         when "."
           repeat_last_action

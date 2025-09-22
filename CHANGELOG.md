@@ -2,6 +2,25 @@
 
 All notable changes to the HyperList Ruby TUI will be documented in this file.
 
+## [1.7.0] - 2025-09-18
+
+### Added
+- **Checkbox removal feature**
+  - **C-X key**: Remove checkboxes from items
+  - Removes all checkbox patterns: `[ ]`, `[X]`, `[x]`, `[O]`, `[-]`, `[_]`
+  - Also removes associated timestamps (YYYY-MM-DD HH.MM: format)
+  - Provides feedback messages for successful removal or no checkbox found
+  - Added to help documentation under SPECIAL FEATURES
+  - Complements existing v/V checkbox toggle functionality
+
+### Enhanced
+- **Cross-parent movement improvements**
+  - C-UP/C-DOWN now respect visibility principle (move only item if uncollapsed, item+children if collapsed)
+  - Added orphaned children reunification logic
+  - Items moved into collapsed areas automatically unfold destination
+  - Moved items are guaranteed to remain visible (safety net protection)
+  - Single-step movement: C-DOWN moves exactly one position down, not to end of descendants
+
 ## [1.6.0] - 2025-09-18
 
 ### BREAKING CHANGES
