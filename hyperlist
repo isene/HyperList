@@ -2712,6 +2712,34 @@ class HyperListApp
     end
   end
 
+  def force_item_visible(target_real_idx)
+    # Absolutely ensure the item at target_real_idx is visible - last resort safety net
+    return if target_real_idx >= @items.length || target_real_idx < 0
+
+    target_item = @items[target_real_idx]
+    target_level = target_item["level"]
+
+    # Walk backwards and unfold ALL ancestors, no matter what
+    (target_real_idx - 1).downto(0) do |i|
+      item = @items[i]
+
+      # If this item could be an ancestor (higher in hierarchy)
+      if item["level"] < target_level
+        # Force unfold it, regardless of whether it has children
+        item["fold"] = false if item.has_key?("fold")
+
+        # Update target_level to continue searching
+        target_level = item["level"]
+
+        # Continue until we reach level 0
+        break if target_level == 0
+      end
+    end
+
+    # Force a cache clear to ensure visibility updates
+    clear_cache if respond_to?(:clear_cache)
+  end
+
   def move_item_up(with_children = false)
     visible = get_visible_items
     return if @current >= visible.length || @current == 0
@@ -2764,6 +2792,9 @@ class HyperListApp
     items_to_move.each_with_index do |item_to_move, idx|
       @items.insert(adjusted_target + idx, item_to_move)
     end
+
+    # FORCE the moved item to be visible (safety net)
+    force_item_visible(adjusted_target)
 
     # Update cursor to follow the moved item
     new_visible = get_visible_items
@@ -2834,6 +2865,9 @@ class HyperListApp
     items_to_move.each_with_index do |item_to_move, idx|
       @items.insert(adjusted_target + idx, item_to_move)
     end
+
+    # FORCE the moved item to be visible (safety net)
+    force_item_visible(adjusted_target)
 
     # Update cursor to follow the moved item
     new_visible = get_visible_items
