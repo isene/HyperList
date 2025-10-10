@@ -2371,14 +2371,23 @@ class HyperListApp
   
   def insert_child
     @mode = :insert
-    
+
     input = @footer.ask("New child item: ", "")
-    
+
     if input && !input.strip.empty?
       insert_child_with_text(input)
       record_last_action(:insert_child, input)
+
+      # Handle multi-line paste
+      if @footer.multiline_buffer && !@footer.multiline_buffer.empty?
+        @footer.multiline_buffer.each do |line|
+          next if line.strip.empty?
+          insert_child_with_text(line.strip)
+        end
+        @footer.multiline_buffer = []
+      end
     end
-    
+
     @mode = :normal
     @footer.clear  # Clear footer immediately
     @footer.refresh
@@ -2386,14 +2395,23 @@ class HyperListApp
   
   def insert_outdented
     @mode = :insert
-    
+
     input = @footer.ask("New outdented item: ", "")
-    
+
     if input && !input.strip.empty?
       insert_outdented_with_text(input)
       record_last_action(:insert_outdented, input)
+
+      # Handle multi-line paste
+      if @footer.multiline_buffer && !@footer.multiline_buffer.empty?
+        @footer.multiline_buffer.each do |line|
+          next if line.strip.empty?
+          insert_outdented_with_text(line.strip)
+        end
+        @footer.multiline_buffer = []
+      end
     end
-    
+
     @mode = :normal
     @footer.clear  # Clear footer immediately
     @footer.refresh
