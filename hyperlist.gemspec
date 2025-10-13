@@ -28,7 +28,7 @@ Gem::Specification.new do |spec|
   spec.require_paths = ["."]
 
   # Runtime dependencies
-  spec.add_runtime_dependency "rcurses", "~> 5.1", ">= 5.1.6"
+  spec.add_runtime_dependency "rcurses", "~> 6.1", ">= 6.1.5"
   
   # Development dependencies
   spec.add_development_dependency "minitest", "~> 5.0"
