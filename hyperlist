@@ -7,7 +7,7 @@
 # Check for help/version BEFORE loading any libraries
 if ARGV[0] == '-h' || ARGV[0] == '--help'
   puts <<~HELP
-    HyperList v1.5.1 - Terminal User Interface for HyperList files
+    HyperList v1.8.0 - Terminal User Interface for HyperList files
     
     USAGE
       hyperlist [OPTIONS] [FILE]
@@ -52,7 +52,7 @@ if ARGV[0] == '-h' || ARGV[0] == '--help'
   HELP
   exit 0
 elsif ARGV[0] == '-v' || ARGV[0] == '--version'
-  puts "HyperList v1.5.1"
+  puts "HyperList v1.8.0"
   exit 0
 end
 
@@ -72,7 +72,7 @@ class HyperListApp
   include Rcurses::Input
   include Rcurses::Cursor
   
-  VERSION = "1.7.0"
+  VERSION = "1.8.0"
   
   def initialize(filename = nil)
     @filename = filename ? File.expand_path(filename) : nil
@@ -2507,19 +2507,41 @@ class HyperListApp
   
   def insert_line
     @mode = :insert
-    
+
     input = @footer.ask("New item: ", "")
-    
+
     if input && !input.strip.empty?
-      insert_line_with_text(input)
+      # Collect all lines (first line + buffer)
+      all_lines = [input]
+      if @footer.multiline_buffer && !@footer.multiline_buffer.empty?
+        all_lines += @footer.multiline_buffer.reject { |l| l.strip.empty? }
+        @footer.multiline_buffer = []
+      end
+
+      # Insert all lines as siblings at the same level
+      all_lines.each do |line|
+        insert_line_with_text(line.strip)
+        @current -= 1  # Keep cursor at same position so next insert is sibling
+      end
+      @current += 1  # Move to last inserted item
+
       record_last_action(:insert_line, input)
     end
-    
+
     @mode = :normal
     @footer.clear  # Clear footer immediately
     @footer.refresh
   end
-  
+
+  # Alias for 'o' key
+  alias insert_line_below insert_line
+
+  # Method for 'O' key - insert line above
+  def insert_line_above
+    @current -= 1 if @current > 0
+    insert_line
+  end
+
   def insert_line_with_text(text)
     return unless text && !text.strip.empty?
 
@@ -2550,17 +2572,21 @@ class HyperListApp
     input = @footer.ask("New child item: ", "")
 
     if input && !input.strip.empty?
-      insert_child_with_text(input)
-      record_last_action(:insert_child, input)
-
-      # Handle multi-line paste
+      # Collect all lines (first line + buffer)
+      all_lines = [input]
       if @footer.multiline_buffer && !@footer.multiline_buffer.empty?
-        @footer.multiline_buffer.each do |line|
-          next if line.strip.empty?
-          insert_child_with_text(line.strip)
-        end
+        all_lines += @footer.multiline_buffer.reject { |l| l.strip.empty? }
         @footer.multiline_buffer = []
       end
+
+      # Insert all lines as siblings at the same level
+      all_lines.each do |line|
+        insert_child_with_text(line.strip)
+        @current -= 1  # Keep cursor at same position so next insert is sibling
+      end
+      @current += 1  # Move to last inserted item
+
+      record_last_action(:insert_child, input)
     end
 
     @mode = :normal
@@ -2574,17 +2600,37 @@ class HyperListApp
     input = @footer.ask("New outdented item: ", "")
 
     if input && !input.strip.empty?
-      insert_outdented_with_text(input)
-      record_last_action(:insert_outdented, input)
-
-      # Handle multi-line paste
+      # Collect all lines (first line + buffer)
+      all_lines = [input]
       if @footer.multiline_buffer && !@footer.multiline_buffer.empty?
-        @footer.multiline_buffer.each do |line|
-          next if line.strip.empty?
-          insert_outdented_with_text(line.strip)
-        end
+        all_lines += @footer.multiline_buffer.reject { |l| l.strip.empty? }
         @footer.multiline_buffer = []
       end
+
+      # Calculate target level BEFORE inserting anything
+      visible = get_visible_items
+      if @current < visible.length
+        current_level = visible[@current]["level"]
+        target_level = [current_level - 1, 0].max  # Outdented level
+      else
+        target_level = 0
+      end
+
+      # Insert first line normally
+      insert_outdented_with_text(all_lines[0].strip)
+
+      # Insert remaining lines at same level as the first
+      if all_lines.length > 1
+        all_lines[1..-1].each do |line|
+          visible = get_visible_items
+          real_idx = get_real_index(visible[@current])
+          @items.insert(real_idx + 1, {"text" => line.strip, "level" => target_level, "fold" => false})
+          @current += 1
+        end
+        @modified = true
+      end
+
+      record_last_action(:insert_outdented, input)
     end
 
     @mode = :normal
@@ -2771,14 +2817,14 @@ class HyperListApp
   def yank_line(with_children = false)
     visible = get_visible_items
     return if @current >= visible.length
-    
+
     item = visible[@current]
     real_idx = get_real_index(item)
-    
+
     @clipboard = []
     @clipboard << item.dup
     @clipboard_is_tree = with_children  # Remember if this is a tree copy (Y) or single (y)
-    
+
     # Copy children if requested
     if with_children
       level = item["level"]
@@ -2790,7 +2836,15 @@ class HyperListApp
         end
       end
     end
-    
+
+    # Copy to system clipboard for middle-click paste
+    begin
+      text_to_copy = @clipboard.map { |it| "  " * it["level"] + it["text"] }.join("\n")
+      Clipboard.copy(text_to_copy)
+    rescue => e
+      # Silently fail if clipboard gem not available
+    end
+
     @message = "Yanked #{@clipboard.length} item(s)"
     record_last_action(:yank_line, with_children)
   end

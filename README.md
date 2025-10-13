@@ -29,17 +29,26 @@ For historical context and the original VIM implementation, see: [hyperlist.vim]
 ### Help Screen
 ![HyperList Help](img/screenshot_help.png)
 
-## What's New in v1.4.4
+## What's New in v1.8.0
 
-### 🔧 Case Conversion Commands
-- **`gU`**: Convert current line to UPPERCASE
-- **`gu`**: Convert current line to lowercase
-- Works with all HyperList elements (checkboxes, operators, etc.)
+### 📋 Multi-Line Paste Support
+- **Paste multiple lines**: When pasting multi-line content into item insertion prompts ('o', 'O', 'a', 'A'), each line becomes a separate item
+- **Visual feedback**: Shows `[+N lines]` indicator during multi-line paste
+- **Smart insertion**: All pasted lines inserted as siblings at the same level
+- Great for importing bullet lists from PDFs, emails, or other documents
+- Requires rcurses 6.1.5+
 
-### 🐛 Bug Fixes
-- Fixed color code display issues with numbered lists and operators
-- Improved handling of qualifiers like `[? conditional]`
-- Better coloring when combining numbered lists with operators (e.g., `1. NOT: item`)
+### 📄 PDF/LaTeX Export
+- **Export to PDF**: `:export pdf filename.pdf` - Full LaTeX-based PDF generation
+- **Export to LaTeX**: `:export latex filename.tex` - Get the LaTeX source
+- **Professional output**: Color-coded elements, table of contents, headers
+- **Complete HyperList support**: All syntax elements rendered beautifully
+- Requires: texlive-latex-base and texlive-latex-extra packages
+
+### 📋 System Clipboard Integration
+- **Yank to clipboard**: 'y' and 'Y' now copy to system clipboard
+- **Middle-click paste**: Yanked items can be pasted into other terminals
+- **Preserves indentation**: Copied text maintains proper structure
 
 ## Previous Version Features (v1.4.0)
 
@@ -149,6 +158,8 @@ All `:set` commands automatically update the file's configuration line.
 - **Dates**: `2025-08-12` or `2025-08-12 14:30`
 
 ### Export Formats
+- **PDF**: Professional LaTeX-based PDF with color coding and TOC
+- **LaTeX**: Source .tex files for customization
 - **HTML**: Full-featured HTML with syntax highlighting
 - **Markdown**: GitHub-flavored Markdown
 - **Plain Text**: Clean text output
@@ -236,9 +247,11 @@ hyperlist file.txt          # Open any text file
 - `:q` - Quit
 - `:wq` or `W` - Save and quit
 - `:e file` - Open file
+- `:export pdf` - Export to PDF (requires LaTeX)
+- `:export latex` - Export to LaTeX source
 - `:export html` - Export to HTML
 - `:export md` - Export to Markdown
-- `:graph` - Export to PNG
+- `:graph` - Export to PNG graph
 
 #### Template Commands
 - `:st` - Save current document as template
