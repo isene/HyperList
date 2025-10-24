@@ -7,7 +7,7 @@
 # Check for help/version BEFORE loading any libraries
 if ARGV[0] == '-h' || ARGV[0] == '--help'
   puts <<~HELP
-    HyperList v1.8.0 - Terminal User Interface for HyperList files
+    HyperList v1.9.0 - Terminal User Interface for HyperList files
     
     USAGE
       hyperlist [OPTIONS] [FILE]
@@ -52,7 +52,7 @@ if ARGV[0] == '-h' || ARGV[0] == '--help'
   HELP
   exit 0
 elsif ARGV[0] == '-v' || ARGV[0] == '--version'
-  puts "HyperList v1.8.0"
+  puts "HyperList v1.9.0"
   exit 0
 end
 
@@ -66,13 +66,14 @@ require 'digest'
 require 'base64'
 require 'fileutils'
 require 'json'
+require 'shellwords'
 
 class HyperListApp
   include Rcurses
   include Rcurses::Input
   include Rcurses::Cursor
   
-  VERSION = "1.8.0"
+  VERSION = "1.9.0"
   
   def initialize(filename = nil)
     @filename = filename ? File.expand_path(filename) : nil
@@ -91,6 +92,8 @@ class HyperListApp
     @show_numbers = false  # Line numbers disabled by default
     @command_history = load_command_history  # Command history for : commands
     @clipboard = nil
+    @tagged_items = []  # Items tagged for batch operations
+    @original_items = nil  # Track original file state for smart modified flag
     @undo_stack = []
     @undo_position = []  # Stack of cursor positions for undo
     @redo_stack = []
@@ -223,7 +226,8 @@ class HyperListApp
     @items = []
     @encrypted_lines = {}
     @config_line = nil  # Reset config line before loading
-    
+    @tagged_items = []  # Clear tags when loading new file
+
     # Read file content
     content = File.read(file) rescue ""
     
@@ -354,6 +358,9 @@ class HyperListApp
     
     # Update recent files list
     add_to_recent_files(File.expand_path(file)) if file
+
+    # Save original state for smart modified flag
+    @original_items = @items.map { |item| item.dup }
   end
   
   def auto_fold_deep_levels(max_level)
@@ -703,6 +710,7 @@ class HyperListApp
     end
     
     @modified = false
+    @original_items = @items.map { |item| item.dup }  # Save state after save
     @last_auto_save = Time.now if @auto_save_enabled
   end
   
@@ -1297,19 +1305,30 @@ class HyperListApp
           end
         end
         
-        # Apply current item highlighting (all lines of wrapped text get bg)
-        if idx == @current
-          # Skip background highlighting in presentation mode for items in focus
-          if !(@presentation_mode && is_item_in_presentation_focus?(item))
+        # Apply background highlighting based on tagged/selected state
+        real_idx = get_real_index(item)
+        is_tagged = real_idx && @tagged_items.include?(real_idx)
+        is_selected = idx == @current
+
+        bg_color = nil
+        if is_tagged && is_selected
+          # Tagged AND selected - lighter blue
+          bg_color = "21" unless @presentation_mode && is_item_in_presentation_focus?(item)
+        elsif is_tagged
+          # Only tagged - dark blue
+          bg_color = "17"
+        elsif is_selected
+          # Only selected - normal gray
+          unless @presentation_mode && is_item_in_presentation_focus?(item)
             bg_color = (!@split_view || @active_pane == :main) ? "237" : "234"
-            if bg_color
-              # Pad line to full width and apply background
-              padded_line = line + " " * [@cols - line.pure.length, 0].max
-              bg_code = "\e[48;5;#{bg_color}m"
-              reset_bg = "\e[49m"
-              line = bg_code + padded_line.gsub(/\e\[49m/, '') + reset_bg
-            end
           end
+        end
+
+        if bg_color
+          padded_line = line + " " * [@cols - line.pure.length, 0].max
+          bg_code = "\e[48;5;#{bg_color}m"
+          reset_bg = "\e[49m"
+          line = bg_code + padded_line.gsub(/\e\[49m/, '') + reset_bg
         end
         
         lines << line
@@ -1679,16 +1698,19 @@ class HyperListApp
       
       # Auto-save indicator
       auto_save_indicator = @auto_save_enabled ? "[A]" : ""
-      
-      # Split view indicator  
+
+      # Split view indicator
       split_indicator = @split_view ? "[#{@active_pane.upcase}]" : ""
-      
+
+      # Tagged items indicator
+      tagged_indicator = @tagged_items.any? ? "[T:#{@tagged_items.length}]" : ""
+
       # Build status line components
       # Use full path with ~ for home directory
       full_path = @filename ? @filename.gsub(ENV['HOME'], '~') : "New HyperList"
       file_part = "#{full_path}#{modified_indicator}"
       stats_part = "L#{pos} W:#{word_count}"
-      indicators = "#{auto_save_indicator}#{split_indicator}"
+      indicators = "#{auto_save_indicator}#{split_indicator}#{tagged_indicator}"
       right_side = "? help  #{version_text}"
       
       # Combine left elements
@@ -2426,9 +2448,24 @@ class HyperListApp
     
     # Clear cache since items changed
     clear_cache
-    
-    @modified = true
-    @message = "Undone (#{@undo_stack.length} undo levels, #{@redo_stack.length} redo available)"
+
+    # Check if we've returned to original state
+    if @original_items && items_match?(@items, @original_items)
+      @modified = false
+      @message = "Undone to original state (#{@undo_stack.length} undo levels, #{@redo_stack.length} redo available)"
+    else
+      @modified = true
+      @message = "Undone (#{@undo_stack.length} undo levels, #{@redo_stack.length} redo available)"
+    end
+  end
+
+  def items_match?(items1, items2)
+    return false if items1.length != items2.length
+    items1.each_with_index do |item, idx|
+      return false if item["text"] != items2[idx]["text"] ||
+                     item["level"] != items2[idx]["level"]
+    end
+    true
   end
   
   def record_last_action(type, data = nil)
@@ -2762,55 +2799,86 @@ class HyperListApp
     visible = get_visible_items
     return if visible.empty?
     return if @current >= visible.length
-    
+
     save_undo_state  # Save state before modification
-    
-    item = visible[@current]
-    real_idx = get_real_index(item)
-    
-    # First, yank the item(s) to clipboard
-    @clipboard = []
-    @clipboard << item.dup
-    
-    # Determine what to delete
-    level = item["level"]
-    delete_count = 1
-    
-    if with_children
-      # Delete item and its children (C-D was used)
-      @clipboard_is_tree = true  # Mark as tree for paste behavior
-      ((real_idx + 1)...@items.length).each do |i|
-        if @items[i]["level"] > level
-          @clipboard << @items[i].dup  # Also add children to clipboard
-          delete_count += 1
+
+    # Handle tagged items
+    if @tagged_items.any?
+      @clipboard = []
+      @clipboard_is_tree = false
+
+      # Sort tagged indices in reverse to delete from end to start
+      @tagged_items.sort.reverse.each do |real_idx|
+        next if real_idx >= @items.length
+        @clipboard.unshift(@items[real_idx].dup)
+        if with_children
+          # Delete item and children
+          level = @items[real_idx]["level"]
+          delete_count = 1
+          ((real_idx + 1)...@items.length).each do |i|
+            if @items[i]["level"] > level
+              @clipboard << @items[i].dup
+              delete_count += 1
+            else
+              break
+            end
+          end
+          delete_count.times { @items.delete_at(real_idx) }
         else
-          break
+          @items.delete_at(real_idx)
         end
       end
+
+      @message = "Deleted and yanked #{@tagged_items.length} tagged item(s)"
+      @tagged_items = []  # Clear tags after operation
     else
-      # For single line delete (D key - delete only the current line)
-      @clipboard_is_tree = false  # Mark as single/adaptive for paste behavior
-      # Don't include children - delete_count stays at 1
+      # Normal single item delete
+      item = visible[@current]
+      real_idx = get_real_index(item)
+
+      # First, yank the item(s) to clipboard
+      @clipboard = []
+      @clipboard << item.dup
+
+      # Determine what to delete
+      level = item["level"]
+      delete_count = 1
+
+      if with_children
+        # Delete item and its children (C-D was used)
+        @clipboard_is_tree = true  # Mark as tree for paste behavior
+        ((real_idx + 1)...@items.length).each do |i|
+          if @items[i]["level"] > level
+            @clipboard << @items[i].dup  # Also add children to clipboard
+            delete_count += 1
+          else
+            break
+          end
+        end
+      else
+        # For single line delete (D key - delete only the current line)
+        @clipboard_is_tree = false  # Mark as single/adaptive for paste behavior
+        # Don't include children - delete_count stays at 1
+      end
+
+      # Delete the items
+      # Remember the level of the deleted item for renumbering
+      deleted_level = item["level"]
+
+      delete_count.times { @items.delete_at(real_idx) }
+
+      # Renumber siblings at the deleted item's level
+      renumber_siblings(deleted_level) unless @items.length == 1
+
+      @message = "Deleted and yanked #{@clipboard.length} item(s)"
     end
-    
-    # Delete the items
-    # Remember the level of the deleted item for renumbering
-    deleted_level = item["level"]
-    
-    delete_count.times { @items.delete_at(real_idx) }
-    
+
     @items = [{"text" => "Empty", "level" => 0, "fold" => false}] if @items.empty?
-    
-    # Renumber siblings at the deleted item's level
-    renumber_siblings(deleted_level) unless @items.length == 1
-    
+
     @current = [@current, get_visible_items.length - 1].min
     @current = 0 if @current < 0
     @modified = true
-    
-    # Show message
-    @message = "Deleted and yanked #{@clipboard.length} item(s)"
-    
+
     record_last_action(:delete_line, with_children)
   end
   
@@ -2818,23 +2886,49 @@ class HyperListApp
     visible = get_visible_items
     return if @current >= visible.length
 
-    item = visible[@current]
-    real_idx = get_real_index(item)
-
     @clipboard = []
-    @clipboard << item.dup
-    @clipboard_is_tree = with_children  # Remember if this is a tree copy (Y) or single (y)
+    @clipboard_is_tree = with_children
 
-    # Copy children if requested
-    if with_children
-      level = item["level"]
-      ((real_idx + 1)...@items.length).each do |i|
-        if @items[i]["level"] > level
-          @clipboard << @items[i].dup
-        else
-          break
+    # Handle tagged items
+    if @tagged_items.any?
+      @tagged_items.sort.each do |real_idx|
+        next if real_idx >= @items.length
+        @clipboard << @items[real_idx].dup
+        if with_children
+          # Copy children too
+          level = @items[real_idx]["level"]
+          ((real_idx + 1)...@items.length).each do |i|
+            if @items[i]["level"] > level
+              @clipboard << @items[i].dup
+            else
+              break
+            end
+          end
         end
       end
+
+      @message = "Yanked #{@tagged_items.length} tagged item(s)"
+      @tagged_items = []  # Clear tags after operation
+    else
+      # Normal single item yank
+      item = visible[@current]
+      real_idx = get_real_index(item)
+
+      @clipboard << item.dup
+
+      # Copy children if requested
+      if with_children
+        level = item["level"]
+        ((real_idx + 1)...@items.length).each do |i|
+          if @items[i]["level"] > level
+            @clipboard << @items[i].dup
+          else
+            break
+          end
+        end
+      end
+
+      @message = "Yanked #{@clipboard.length} item(s)"
     end
 
     # Copy to system clipboard for middle-click paste
@@ -2845,7 +2939,6 @@ class HyperListApp
       # Silently fail if clipboard gem not available
     end
 
-    @message = "Yanked #{@clipboard.length} item(s)"
     record_last_action(:yank_line, with_children)
   end
   
@@ -2886,6 +2979,137 @@ class HyperListApp
     @modified = true
     @message = "Pasted #{@clipboard.length} item(s)"
     record_last_action(:paste, nil)
+  end
+
+  def paste_above
+    return unless @clipboard && !@clipboard.empty?
+
+    save_undo_state  # Save state before modification
+
+    visible = get_visible_items
+    if @current < visible.length
+      real_idx = get_real_index(visible[@current])
+
+      if @clipboard_is_tree
+        # For tree paste (C-D or Y), maintain original indentation structure
+        @clipboard.reverse.each do |item|
+          new_item = item.dup
+          @items.insert(real_idx, new_item)
+        end
+      else
+        # For single/adaptive paste (D or y), adjust to match context
+        base_level = visible[@current]["level"]
+        level_diff = base_level - @clipboard[0]["level"]
+
+        @clipboard.reverse.each do |item|
+          new_item = item.dup
+          new_item["level"] = item["level"] + level_diff
+          @items.insert(real_idx, new_item)
+        end
+      end
+    else
+      # Pasting at end of list - maintain original levels
+      @clipboard.each do |item|
+        @items << item.dup
+      end
+    end
+
+    @modified = true
+    @message = "Pasted #{@clipboard.length} item(s) above"
+    record_last_action(:paste_above, nil)
+  end
+
+  def toggle_tag
+    visible = get_visible_items
+    return if @current >= visible.length
+
+    real_idx = get_real_index(visible[@current])
+
+    if @tagged_items.include?(real_idx)
+      @tagged_items.delete(real_idx)
+      @message = "Untagged item (#{@tagged_items.length} tagged)"
+    else
+      @tagged_items << real_idx
+      @message = "Tagged item (#{@tagged_items.length} tagged)"
+      # Auto-advance cursor for easy consecutive tagging
+      @current += 1 if @current < visible.length - 1
+    end
+  end
+
+  def clear_tags
+    count = @tagged_items.length
+    @tagged_items = []
+    @message = "Cleared #{count} tagged item(s)"
+  end
+
+  def tag_by_regex
+    pattern = @footer.ask("Tag pattern (regex): ", "")
+    return if pattern.nil? || pattern.strip.empty?
+
+    begin
+      regex = Regexp.new(pattern, Regexp::IGNORECASE)
+      count = 0
+
+      @items.each_with_index do |item, idx|
+        if item["text"] =~ regex
+          @tagged_items << idx unless @tagged_items.include?(idx)
+          count += 1
+        end
+      end
+
+      @tagged_items.uniq!
+      @message = "Tagged #{count} item(s) matching /#{pattern}/"
+    rescue RegexpError => e
+      @message = "Invalid regex: #{e.message}"
+    end
+  end
+
+  def spawn_editor
+    return unless @filename
+
+    # Save file before editing
+    save_file
+
+    # Save terminal state
+    system("stty -g < /dev/tty > /tmp/hyperlist_stty_$$")
+
+    # Reset terminal to cooked mode for editor
+    system('stty sane < /dev/tty')
+    system('clear < /dev/tty > /dev/tty')
+    Rcurses::Cursor.show
+
+    # Launch editor
+    editor = ENV.fetch('EDITOR', 'vi')
+    system("#{editor} #{Shellwords.escape(@filename)}")
+
+    # Restore terminal state
+    system("stty $(cat /tmp/hyperlist_stty_$$) < /dev/tty")
+    system("rm -f /tmp/hyperlist_stty_$$")
+
+    # Flush input and reset stdin
+    $stdin.iflush if $stdin.respond_to?(:iflush)
+    system('stty raw -echo isig < /dev/tty')
+    $stdin.raw!
+    $stdin.echo = false
+
+    # Reinitialize rcurses
+    Rcurses.init!
+    Rcurses::Cursor.hide
+    Rcurses.clear_screen
+
+    # Reload the file
+    load_file(@filename)
+    @current = 0
+    @offset = 0
+
+    @message = "File reloaded from $EDITOR"
+
+    # Force complete screen refresh
+    clear_cache
+    @main.full_refresh if @main
+    @footer.full_refresh if @footer
+    @split_pane.full_refresh if @split_pane && @split_view
+    render
   end
 
   def calculate_level_for_position(target_real_idx)
@@ -3152,64 +3376,122 @@ class HyperListApp
   def indent_right(with_children = true)
     visible = get_visible_items
     return if @current >= visible.length
-    
-    item = visible[@current]
-    real_idx = get_real_index(item)
-    
-    # Can only indent if there's a previous item at same or higher level
-    if real_idx > 0
-      save_undo_state  # Save state before modification
-      original_level = @items[real_idx]["level"]
-      @items[real_idx]["level"] += 1
-      
-      # Also indent children if requested
-      if with_children
-        ((real_idx + 1)...@items.length).each do |i|
-          if @items[i]["level"] > original_level
-            @items[i]["level"] += 1
-          else
-            break
+
+    save_undo_state  # Save state before modification
+
+    # Handle tagged items
+    if @tagged_items.any?
+      @tagged_items.sort.each do |real_idx|
+        next if real_idx >= @items.length
+        next if real_idx == 0  # Can't indent first item
+
+        original_level = @items[real_idx]["level"]
+        @items[real_idx]["level"] += 1
+
+        # Also indent children if requested
+        if with_children
+          ((real_idx + 1)...@items.length).each do |i|
+            if @items[i]["level"] > original_level
+              @items[i]["level"] += 1
+            else
+              break
+            end
           end
         end
       end
-      
-      # Ensure the moved item remains visible
-      force_item_visible(real_idx)
 
+      @message = "Indented #{@tagged_items.length} tagged item(s)"
+      @tagged_items = []  # Clear tags after operation
       @modified = true
-      record_last_action(:indent_right, with_children)
+    else
+      # Normal single item indent
+      item = visible[@current]
+      real_idx = get_real_index(item)
+
+      # Can only indent if there's a previous item at same or higher level
+      if real_idx > 0
+        original_level = @items[real_idx]["level"]
+        @items[real_idx]["level"] += 1
+
+        # Also indent children if requested
+        if with_children
+          ((real_idx + 1)...@items.length).each do |i|
+            if @items[i]["level"] > original_level
+              @items[i]["level"] += 1
+            else
+              break
+            end
+          end
+        end
+
+        # Ensure the moved item remains visible
+        force_item_visible(real_idx)
+
+        @modified = true
+      end
     end
+
+    record_last_action(:indent_right, with_children)
   end
   
   def indent_left(with_children = true)
     visible = get_visible_items
     return if @current >= visible.length
-    
-    item = visible[@current]
-    real_idx = get_real_index(item)
-    
-    if @items[real_idx]["level"] > 0
-      save_undo_state  # Save state before modification
-      original_level = @items[real_idx]["level"]
-      @items[real_idx]["level"] -= 1
-      
-      # Also unindent children if requested
-      if with_children
-        ((real_idx + 1)...@items.length).each do |i|
-          if @items[i]["level"] > original_level
-            @items[i]["level"] -= 1
-          else
-            break
+
+    save_undo_state  # Save state before modification
+
+    # Handle tagged items
+    if @tagged_items.any?
+      @tagged_items.sort.each do |real_idx|
+        next if real_idx >= @items.length
+        next if @items[real_idx]["level"] == 0  # Already at leftmost
+
+        original_level = @items[real_idx]["level"]
+        @items[real_idx]["level"] -= 1
+
+        # Also unindent children if requested
+        if with_children
+          ((real_idx + 1)...@items.length).each do |i|
+            if @items[i]["level"] > original_level
+              @items[i]["level"] -= 1
+            else
+              break
+            end
           end
         end
       end
-      
-      # Ensure the moved item remains visible
-      force_item_visible(real_idx)
 
+      @message = "Unindented #{@tagged_items.length} tagged item(s)"
+      @tagged_items = []  # Clear tags after operation
       @modified = true
-      record_last_action(:indent_left, with_children)
+    else
+      # Normal single item unindent
+      item = visible[@current]
+      real_idx = get_real_index(item)
+
+      if @items[real_idx]["level"] > 0
+        original_level = @items[real_idx]["level"]
+        @items[real_idx]["level"] -= 1
+
+        # Also unindent children if requested
+        if with_children
+          ((real_idx + 1)...@items.length).each do |i|
+            if @items[i]["level"] > original_level
+              @items[i]["level"] -= 1
+            else
+              break
+            end
+          end
+        end
+
+        # Ensure the moved item remains visible
+        force_item_visible(real_idx)
+
+        @modified = true
+      end
     end
+
+    record_last_action(:indent_left, with_children)
   end
   
   def toggle_checkbox
@@ -3444,8 +3726,9 @@ class HyperListApp
     help_lines << help_line("#{"gU".fg("10")}", "Uppercase line", "#{"gu".fg("10")}", "Lowercase line")
     help_lines << help_line("#{"I".fg("10")}", "Cycle indent (2-5)")
     help_lines << help_line("#{"D".fg("10")}", "Delete+yank line", "#{"C-D".fg("10")}", "Delete+yank item&descendants")
-    help_lines << help_line("#{"y".fg("10")}" + "/".fg("10") + "#{"Y".fg("10")}", "Copy line/tree", "#{"p".fg("10")}", "Paste")
-    help_lines << help_line("#{"u".fg("10")}", "Undo", "#{".".fg("10")}", "Repeat last action")
+    help_lines << help_line("#{"y".fg("10")}" + "/".fg("10") + "#{"Y".fg("10")}", "Copy line/tree", "#{"p".fg("10")}", "Paste below")
+    help_lines << help_line("#{"P".fg("10")}", "Paste above", "#{"E".fg("10")}", "Edit in $EDITOR")
+    help_lines << help_line("#{"U".fg("10")}", "Undo", "#{".".fg("10")}", "Repeat last action")
     help_lines << help_line("#{"r".fg("10")}" + ", ".fg("10") + "#{"C-R".fg("10")}", "Redo")
     help_lines << help_line("#{"S-UP".fg("10")}", "Move item up", "#{"S-DOWN".fg("10")}", "Move item down")
     help_lines << help_line("#{"C-UP".fg("10")}", "Move up in visible list", "#{"C-DOWN".fg("10")}", "Move down in visible list")
@@ -3456,7 +3739,7 @@ class HyperListApp
     help_lines << help_line("#{"v".fg("10")}", "Toggle checkbox", "#{"V".fg("10")}", "Checkbox with date")
     help_lines << help_line("#{"C-X".fg("10")}", "Remove checkbox", "", "")
     help_lines << help_line("#{"C-E".fg("10")}", "Encrypt/decrypt line", "#{"C-U".fg("10")}", "Toggle State/Trans underline")
-    help_lines << help_line("#{"P".fg("10")}", "Presentation mode", "#{"Tab/S-Tab".fg("10")}", "Next/prev sibling (in P)")
+    help_lines << help_line("#{"C-P".fg("10")}", "Presentation mode", "#{"Tab/S-Tab".fg("10")}", "Next/prev sibling (in P)")
     help_lines << help_line("#{"Ma".fg("10")}", "Record macro 'a'", "#{"@a".fg("10")}", "Play macro 'a'")
     help_lines << help_line("#{"w".fg("10")}", "Switch panes (split view)")
     help_lines << ""
@@ -3468,8 +3751,15 @@ class HyperListApp
     help_lines << help_line("#{":as on".fg("10")}", "Enable autosave", "#{":as off".fg("10")}", "Disable autosave")
     help_lines << help_line("#{":as N".fg("10")}", "Set interval (secs)", "#{":as".fg("10")}", "Show autosave status")
     help_lines << ""
+    help_lines << "#{"TAGGING & BATCH OPS".fg("14")}"
+    help_lines << help_line("#{"t".fg("10")}", "Tag/untag item", "#{"u".fg("10")}", "Clear all tags")
+    help_lines << help_line("#{"C-T".fg("10")}", "Tag by regex pattern", "", "")
+    help_lines << help_line("#{"[T:N]".fg("245")}", "Status shows N tagged", "#{"Blue bg".fg("245")}", "Tagged items")
+    help_lines << help_line("#{"D/y/Tab".fg("245")}", "Ops work on tagged items")
+    help_lines << ""
+
     help_lines << "#{"TEMPLATES".fg("14")}"
-    help_lines << help_line("#{"t".fg("10")}", "Insert template", "#{":st".fg("10")}", "Save as template")
+    help_lines << help_line("#{"T".fg("10")}", "Insert template", "#{":st".fg("10")}", "Save as template")
     help_lines << help_line("#{":dt".fg("10")}", "Delete template", "#{":lt".fg("10")}", "List user templates")
     help_lines << ""
     
@@ -5112,7 +5402,7 @@ class HyperListApp
     @items << {"text" => "="*50, "level" => 0, "fold" => false, "raw" => true}
     
     # Add built-in templates section
-    @items << {"text" => "BUILT-IN TEMPLATES:", "level" => 0, "fold" => false, "raw" => true}
+    @items << {"text" => "BUILT-IN TEMPLATES:".fg("39"), "level" => 0, "fold" => false, "raw" => true}
     template_list.select { |t| t[2] == "built-in" }.each_with_index do |(key, desc, type), idx|
       @items << {
         "text" => "  #{idx+1}. #{key.capitalize}: #{desc}", 
@@ -5126,7 +5416,7 @@ class HyperListApp
     # Add user templates section if any exist
     if user_templates.any?
       @items << {"text" => "", "level" => 0, "fold" => false, "raw" => true}
-      @items << {"text" => "USER TEMPLATES:", "level" => 0, "fold" => false, "raw" => true}
+      @items << {"text" => "USER TEMPLATES:".fg("39"), "level" => 0, "fold" => false, "raw" => true}
       template_list.select { |t| t[2] == "user" }.each_with_index do |(key, desc, type), idx|
         @items << {
           "text" => "  #{key}: #{desc}", 
@@ -5357,6 +5647,8 @@ class HyperListApp
     when " "
       toggle_fold
     when "u"
+      clear_tags
+    when "U"
       undo
     when "/"
       # Skip search in macros for now
@@ -6262,11 +6554,17 @@ class HyperListApp
           # Cycle through indentation sizes (2-5 spaces)
           cycle_indent_size
         when "t"
+          toggle_tag
+        when "T"
           show_templates
+        when "C-T"
+          tag_by_regex
         when "D"  # Delete line only (without children)
           delete_line(false)  # Delete current line only
         when "C-D"  # Delete line and all descendants explicitly
           delete_line(true)
+        when "E"
+          spawn_editor
         when "C-E"  # Toggle line encryption
           toggle_line_encryption
         when "y"  # Yank/copy single line
@@ -6312,6 +6610,8 @@ class HyperListApp
             end
           end
         when "u"
+          clear_tags
+        when "U"
           undo
         when "\x12"  # Ctrl-R for redo (0x12 is Ctrl-R ASCII code)
           redo_change
@@ -6330,6 +6630,8 @@ class HyperListApp
         when "N"
           jump_to_next_template_marker
         when "P"
+          paste_above
+        when "C-P"
           toggle_presentation_mode
         when "\x15"  # Ctrl-U for State/Transition underline toggle
           # Cycle through underline modes: 0 (none) -> 1 (states) -> 2 (transitions) -> 0
