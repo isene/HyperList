@@ -7,7 +7,7 @@
 # Check for help/version BEFORE loading any libraries
 if ARGV[0] == '-h' || ARGV[0] == '--help'
   puts <<~HELP
-    HyperList v1.9.2 - Terminal User Interface for HyperList files
+    HyperList v1.9.3 - Terminal User Interface for HyperList files
     
     USAGE
       hyperlist [OPTIONS] [FILE]
@@ -52,7 +52,7 @@ if ARGV[0] == '-h' || ARGV[0] == '--help'
   HELP
   exit 0
 elsif ARGV[0] == '-v' || ARGV[0] == '--version'
-  puts "HyperList v1.9.2"
+  puts "HyperList v1.9.3"
   exit 0
 end
 
@@ -73,7 +73,7 @@ class HyperListApp
   include Rcurses::Input
   include Rcurses::Cursor
   
-  VERSION = "1.9.2"
+  VERSION = "1.9.3"
   
   def initialize(filename = nil)
     @filename = filename ? File.expand_path(filename) : nil
@@ -596,7 +596,11 @@ class HyperListApp
     saved_offset = @offset
     saved_filename = @filename
     saved_modified = @modified
-    
+    saved_presentation_mode = @presentation_mode
+
+    # Disable presentation mode for recent files viewer
+    @presentation_mode = false
+
     # Create items for recent files display
     @items = []
     @items << {"text" => "RECENT FILES (press Enter to open, q to cancel)", "level" => 0, "fold" => false, "raw" => true}
@@ -627,6 +631,7 @@ class HyperListApp
         @offset = saved_offset
         @filename = saved_filename
         @modified = saved_modified
+        @presentation_mode = saved_presentation_mode
         break
       when "j", "DOWN"
         move_down if @current < @items.length - 1
@@ -641,9 +646,11 @@ class HyperListApp
             @offset = saved_offset
             @filename = saved_filename
             @modified = saved_modified
+            @presentation_mode = saved_presentation_mode
             @message = "Unsaved changes! Save first before opening another file"
             break
           else
+            @presentation_mode = saved_presentation_mode
             @filename = File.expand_path(selected_file)
             load_file(@filename)
             @current = 0
@@ -663,9 +670,11 @@ class HyperListApp
             @offset = saved_offset
             @filename = saved_filename
             @modified = saved_modified
+            @presentation_mode = saved_presentation_mode
             @message = "Unsaved changes! Save first before opening another file"
             break
           else
+            @presentation_mode = saved_presentation_mode
             @filename = File.expand_path(selected_file)
             load_file(@filename)
             @current = 0
@@ -677,7 +686,7 @@ class HyperListApp
       end
     end
   end
-  
+
   def save_file
     return unless @filename
     
@@ -3738,9 +3747,9 @@ class HyperListApp
     # Build help text using consistent formatting
     help_lines = []
     help_lines << " Press #{"?".fg("10")} for full documentation, #{"UP/DOWN".fg("10")} to scroll, or any other key to return"
-    help_lines << ""
+    help_lines << " "
     help_lines << "#{"HYPERLIST KEY BINDINGS".b}"
-    help_lines << ""
+    help_lines << " "
     help_lines << "#{"NAVIGATION".fg("14")}"
     help_lines << help_line("#{"j/↓".fg("10")}", "Move down", "#{"k/↑".fg("10")}", "Move up")
     help_lines << help_line("#{"h".fg("10")}", "Go to parent", "#{"l".fg("10")}", "Go to first child")
@@ -3749,10 +3758,10 @@ class HyperListApp
     help_lines << help_line("#{"R".fg("10")}", "Jump to reference", "#{"F".fg("10")}", "Open file/URL")
     help_lines << help_line("#{"ma".fg("10")}", "Set mark 'a'", "#{"'a".fg("10")}", "Jump to mark 'a'")
     help_lines << help_line("#{"''".fg("10")}", "Jump to prev position", "#{"N".fg("10")}", "Next = template marker")
-    help_lines << ""
+    help_lines << " "
     help_lines << "#{"SEARCH".fg("14")}"
     help_lines << help_line("#{"/".fg("10")}", "Search forward", "#{"n".fg("10")}", "Next match")
-    help_lines << ""
+    help_lines << " "
     help_lines << "#{"FOLDING".fg("14")}"
     help_lines << help_line("#{"Space".fg("10")}", "Toggle fold", "#{"za".fg("10")}", "Toggle all folds")
     help_lines << help_line("#{"zo".fg("10")}", "Open fold", "#{"zc".fg("10")}", "Close fold")
@@ -3760,7 +3769,7 @@ class HyperListApp
     help_lines << help_line("#{"1-9".fg("10")}", "Expand to level", "#{"0".fg("10")}", "Multi-digit fold level")
     help_lines << help_line("#{"▶".fg("245")}", "Collapsed (hidden)")
     help_lines << help_line("#{"▷".fg("245")}", "Expanded (visible)")
-    help_lines << ""
+    help_lines << " "
     help_lines << "#{"EDITING".fg("14")}"
     help_lines << help_line("#{"i/Enter".fg("10")}", "Edit line", "#{"o".fg("10")}", "Insert line below")
     help_lines << help_line("#{"O".fg("10")}", "Insert line above", "#{"a".fg("10")}", "Insert child")
@@ -3776,7 +3785,7 @@ class HyperListApp
     help_lines << help_line("#{"C-UP".fg("10")}", "Move up in visible list", "#{"C-DOWN".fg("10")}", "Move down in visible list")
     help_lines << help_line("#{"→".fg("10")}", "Uncollapse item", "#{"←".fg("10")}", "Collapse item")
     help_lines << help_line("#{"Tab".fg("10")}", "Indent item+kids", "#{"S-Tab".fg("10")}", "Unindent item+kids")
-    help_lines << ""
+    help_lines << " "
     help_lines << "#{"SPECIAL FEATURES".fg("14")}"
     help_lines << help_line("#{"v".fg("10")}", "Toggle checkbox", "#{"V".fg("10")}", "Checkbox with date")
     help_lines << help_line("#{"C-X".fg("10")}", "Remove checkbox", "", "")
@@ -3784,7 +3793,7 @@ class HyperListApp
     help_lines << help_line("#{"C-P".fg("10")}", "Presentation mode", "#{"Tab/S-Tab".fg("10")}", "Next/prev sibling (in P)")
     help_lines << help_line("#{"Ma".fg("10")}", "Record macro 'a'", "#{"@a".fg("10")}", "Play macro 'a'")
     help_lines << help_line("#{"w".fg("10")}", "Switch panes (split view)")
-    help_lines << ""
+    help_lines << " "
     help_lines << "#{"FILE OPERATIONS".fg("14")}"
     help_lines << help_line("#{":w".fg("10")}", "Save", "#{":q".fg("10")}", "Quit")
     help_lines << help_line("#{":wq".fg("10")}", "Save and quit", "#{":e file".fg("10")}", "Open file")
@@ -3792,27 +3801,24 @@ class HyperListApp
     help_lines << help_line("#{":graph :g".fg("10")}", "Export to PNG graph", "#{":vsplit :vs".fg("10")}", "Split view")
     help_lines << help_line("#{":as on".fg("10")}", "Enable autosave", "#{":as off".fg("10")}", "Disable autosave")
     help_lines << help_line("#{":as N".fg("10")}", "Set interval (secs)", "#{":as".fg("10")}", "Show autosave status")
-    help_lines << ""
+    help_lines << " "
     help_lines << "#{"TAGGING & BATCH OPS".fg("14")}"
     help_lines << help_line("#{"t".fg("10")}", "Tag/untag item", "#{"u".fg("10")}", "Clear all tags")
     help_lines << help_line("#{"C-T".fg("10")}", "Tag by regex pattern", "", "")
     help_lines << help_line("#{"[T:N]".fg("245")}", "Status shows N tagged", "#{"Blue bg".fg("245")}", "Tagged items")
     help_lines << help_line("#{"D/y/Tab".fg("245")}", "Ops work on tagged items")
-    help_lines << ""
-
+    help_lines << " "
     help_lines << "#{"TEMPLATES".fg("14")}"
     help_lines << help_line("#{"T".fg("10")}", "Insert template", "#{":st".fg("10")}", "Save as template")
     help_lines << help_line("#{":dt".fg("10")}", "Delete template", "#{":lt".fg("10")}", "List user templates")
-    help_lines << ""
-    
+    help_lines << " "
     help_lines << "#{"CONFIGURATION".fg("14")}"
     help_lines << help_line("#{":set".fg("10")}", "Show all settings")
-    help_lines << help_line("#{":set o".fg("10")}", "Show option value")  
+    help_lines << help_line("#{":set o".fg("10")}", "Show option value")
     help_lines << help_line("#{":set o=val".fg("10")}", "Set option value")
     help_lines << help_line("#{"Options:".fg("245")}", "theme, wrap, fold_level")
     help_lines << help_line("#{"".fg("245")}", "show_numbers, tab_width")
-    help_lines << ""
-    
+    help_lines << " "
     help_lines << "#{"HELP & QUIT".fg("14")}"
     help_lines << help_line("#{"?".fg("10")}", "This help", "#{"??".fg("10")}", "Full documentation")
     help_lines << help_line("#{"q".fg("10")}", "Quit (asks to save)", "#{"Q".fg("10")}", "Force quit")
@@ -3832,13 +3838,17 @@ class HyperListApp
     saved_current = @current
     saved_offset = @offset
     saved_modified = @modified
-    
+    saved_presentation_mode = @presentation_mode
+
+    # Disable presentation mode for help viewer
+    @presentation_mode = false
+
     # Create temporary help items for scrolling
     @items = help.split("\n").map { |line| {"text" => line, "level" => 0, "fold" => false, "raw" => true} }
     @current = 0
     @offset = 0
     @modified = false
-    
+
     # Help viewer loop
     loop do
       render_main
@@ -3880,8 +3890,9 @@ class HyperListApp
     @current = saved_current
     @offset = saved_offset
     @modified = saved_modified
+    @presentation_mode = saved_presentation_mode
   end
-  
+
   def show_documentation
     doc = <<~DOC
     
@@ -4360,13 +4371,17 @@ class HyperListApp
     saved_offset = @offset
     saved_filename = @filename
     saved_modified = @modified
-    
+    saved_presentation_mode = @presentation_mode
+
+    # Disable presentation mode for documentation viewer
+    @presentation_mode = false
+
     # Create temporary documentation items
     @items = doc.split("\n").map { |line| {"text" => line, "level" => 0, "fold" => false, "raw" => true} }
     @current = 0
     @offset = 0
     @modified = false
-    
+
     # Documentation viewer loop
     loop do
       render_main
@@ -4413,8 +4428,9 @@ class HyperListApp
     @offset = saved_offset
     @filename = saved_filename
     @modified = saved_modified
+    @presentation_mode = saved_presentation_mode
   end
-  
+
   def handle_command
     @mode = :command
     # Set command history (reversed for proper UP arrow navigation)

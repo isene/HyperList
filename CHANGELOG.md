@@ -2,6 +2,16 @@
 
 All notable changes to the HyperList Ruby TUI will be documented in this file.
 
+## [1.9.3] - 2025-12-02
+
+### Fixed
+- **Help/documentation viewer navigation**
+  - Fixed invisible cursor on blank separator lines in help (?) and documentation (??) viewers
+  - Blank lines now contain a space so cursor highlighting is visible when navigating
+- **Presentation mode state preservation**
+  - Help, documentation, and recent files viewers now properly save/restore presentation mode state
+  - Prevents presentation mode logic from interfering with viewer navigation
+
 ## [1.9.2] - 2025-12-02
 
 ### Fixed

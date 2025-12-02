@@ -29,7 +29,13 @@ For historical context and the original VIM implementation, see: [hyperlist.vim]
 ### Help Screen
 ![HyperList Help](img/screenshot_help.png)
 
-## What's New in v1.9.2
+## What's New in v1.9.3
+
+### Help Viewer Navigation Fixed
+- Fixed invisible cursor on blank separator lines in help (?) and documentation (??) viewers
+- Presentation mode state now properly preserved when entering/exiting viewers
+
+## Previous Release: v1.9.2
 
 ### Presentation Mode Fixed
 - **Dynamic folding**: Presentation mode now works like hyperlist.vim - folds/unfolds dynamically as you navigate
