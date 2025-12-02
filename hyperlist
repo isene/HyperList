@@ -7,7 +7,7 @@
 # Check for help/version BEFORE loading any libraries
 if ARGV[0] == '-h' || ARGV[0] == '--help'
   puts <<~HELP
-    HyperList v1.9.1 - Terminal User Interface for HyperList files
+    HyperList v1.9.2 - Terminal User Interface for HyperList files
     
     USAGE
       hyperlist [OPTIONS] [FILE]
@@ -52,7 +52,7 @@ if ARGV[0] == '-h' || ARGV[0] == '--help'
   HELP
   exit 0
 elsif ARGV[0] == '-v' || ARGV[0] == '--version'
-  puts "HyperList v1.9.1"
+  puts "HyperList v1.9.2"
   exit 0
 end
 
@@ -73,7 +73,7 @@ class HyperListApp
   include Rcurses::Input
   include Rcurses::Cursor
   
-  VERSION = "1.9.1"
+  VERSION = "1.9.2"
   
   def initialize(filename = nil)
     @filename = filename ? File.expand_path(filename) : nil
@@ -2043,28 +2043,28 @@ class HyperListApp
 
   def move_up
     if @presentation_mode
-      # In presentation mode, we need to handle navigation differently
-      visible_before = get_visible_items
-      
+      # In presentation mode: move to target, then update folds
+      visible = get_visible_items
+      return if visible.empty?
+
+      # Calculate target position
       if @current == 0
-        # Wrap around to last item
-        target_index = visible_before.length - 1
+        target_index = visible.length - 1
       else
         target_index = @current - 1
       end
-      
-      # Get the actual item we want to move to
-      target_item = visible_before[target_index]
-      target_real_idx = get_real_index(target_item)
-      
-      # Update presentation focus for the target item
+
+      # Get the real index of the target item
+      target_real_idx = get_real_index(visible[target_index])
+
+      # Temporarily set current to target so update_presentation_focus works on it
       @current = target_index
       update_presentation_focus
-      
-      # Now find where the target item ended up after reorganization
-      visible_after = get_visible_items
-      visible_after.each_with_index do |item, idx|
-        if get_real_index(item) == target_real_idx
+
+      # After fold changes, find where the target item is now
+      new_visible = get_visible_items
+      new_visible.each_with_index do |item, idx|
+        if item["_real_index"] == target_real_idx
           @current = idx
           break
         end
@@ -2072,9 +2072,8 @@ class HyperListApp
     else
       # Normal mode navigation
       max_items = get_visible_items.length - 1
-      
+
       if @current == 0
-        # Wrap around to last item
         @current = max_items
       else
         @current = [@current - 1, 0].max
@@ -2084,29 +2083,29 @@ class HyperListApp
   
   def move_down
     if @presentation_mode
-      # In presentation mode, we need to handle navigation differently
-      visible_before = get_visible_items
-      max = visible_before.length - 1
-      
-      if @current == max
-        # Wrap around to first item
+      # In presentation mode: move to target, then update folds
+      visible = get_visible_items
+      return if visible.empty?
+      max = visible.length - 1
+
+      # Calculate target position
+      if @current >= max
         target_index = 0
       else
         target_index = @current + 1
       end
-      
-      # Get the actual item we want to move to
-      target_item = visible_before[target_index]
-      target_real_idx = get_real_index(target_item)
-      
-      # Update presentation focus for the target item
+
+      # Get the real index of the target item
+      target_real_idx = get_real_index(visible[target_index])
+
+      # Temporarily set current to target so update_presentation_focus works on it
       @current = target_index
       update_presentation_focus
-      
-      # Now find where the target item ended up after reorganization
-      visible_after = get_visible_items
-      visible_after.each_with_index do |item, idx|
-        if get_real_index(item) == target_real_idx
+
+      # After fold changes, find where the target item is now
+      new_visible = get_visible_items
+      new_visible.each_with_index do |item, idx|
+        if item["_real_index"] == target_real_idx
           @current = idx
           break
         end
@@ -2114,9 +2113,8 @@ class HyperListApp
     else
       # Normal mode navigation
       max = get_visible_items.length - 1
-      
-      if @current == max
-        # Wrap around to first item
+
+      if @current >= max
         @current = 0
       else
         @current = [@current + 1, max].min
@@ -2345,84 +2343,80 @@ class HyperListApp
       # Enter presentation mode
       # Remember which item we're on before any folding changes
       visible_items = get_visible_items
-      if @current < visible_items.length
-        target_item = visible_items[@current]
-      end
-      
+      return if visible_items.empty? || @current >= visible_items.length
+
+      # Get the real index of the current item
+      target_real_idx = visible_items[@current]["_real_index"]
+
       @presentation_mode = true
-      # Clear cache to force re-rendering  
+      # Clear cache to force re-rendering
       @processed_cache.clear
       update_presentation_focus
-      
-      # Make sure cursor is still on the same item after initial folding
-      if target_item
-        new_visible = get_visible_items
-        new_position = new_visible.index(target_item)
-        @current = new_position if new_position
+
+      # Find where the target item is after fold changes
+      new_visible = get_visible_items
+      new_visible.each_with_index do |item, idx|
+        if item["_real_index"] == target_real_idx
+          @current = idx
+          break
+        end
       end
-      
-      @message = "Presentation mode enabled - focus on current item"
+
+      @message = "Presentation mode enabled"
     end
   end
   
   def update_presentation_focus
-    # This method updates the focus in presentation mode
-    # It will be called whenever the cursor moves
+    # Presentation mode: fold everything, then reveal path to current item
+    # Like vim's: fold to level 0, then zv (reveal current line)
     return unless @presentation_mode
-    
+
     visible_items = get_visible_items
     return if visible_items.empty? || @current >= visible_items.length
-    
-    # Remember which item we're focused on
+
+    # Get the current item before we change anything
     current_item = visible_items[@current]
-    current_level = current_item["level"]
     current_real_idx = get_real_index(current_item)
-    
-    # First, fold everything
+    return unless current_real_idx
+
+    current_level = current_item["level"]
+
+    # Step 1: Fold everything that has children
     @items.each_with_index do |item, idx|
       item["fold"] = has_children?(idx, @items)
       item["presentation_focus"] = false
     end
-    
-    # Mark current item as in focus and unfold it in the main items array
-    if current_real_idx && current_real_idx < @items.length
-      @items[current_real_idx]["presentation_focus"] = true
-      @items[current_real_idx]["fold"] = false
-    end
-    
-    # Unfold all ancestors of current item
-    ancestor_indices = []
+
+    # Step 2: Unfold all ancestors (path from root to current item)
     search_level = current_level - 1
     idx = current_real_idx - 1
-    
     while idx >= 0 && search_level >= 0
       if @items[idx]["level"] == search_level
-        @items[idx]["fold"] = false
-        @items[idx]["presentation_focus"] = false  # Ancestors visible but not focused
-        ancestor_indices << idx
+        @items[idx]["fold"] = false  # Unfold this ancestor
         search_level -= 1
       end
       idx -= 1
     end
-    
-    # Mark immediate children as in focus (only one level down)
+
+    # Step 3: Unfold the current item to show its direct children
+    @items[current_real_idx]["fold"] = false
+    @items[current_real_idx]["presentation_focus"] = true
+
+    # Step 4: Mark direct children as in focus (for visual highlighting)
     idx = current_real_idx + 1
     while idx < @items.length && @items[idx]["level"] > current_level
       if @items[idx]["level"] == current_level + 1
         @items[idx]["presentation_focus"] = true
-        # Don't unfold children - let them stay folded unless user explicitly unfolds
       end
       idx += 1
     end
-    
-    # Now recalculate the cursor position to point to the same item
+
+    # Step 5: Recalculate cursor position after fold changes
     new_visible_items = get_visible_items
     new_position = new_visible_items.index(current_item)
-    if new_position
-      @current = new_position
-    end
-    
-    # Clear cache to force re-rendering with new focus
+    @current = new_position if new_position
+
+    # Clear cache to force re-rendering
     @processed_cache.clear
   end
   

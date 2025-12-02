@@ -2,6 +2,15 @@
 
 All notable changes to the HyperList Ruby TUI will be documented in this file.
 
+## [1.9.2] - 2025-12-02
+
+### Fixed
+- **Presentation mode completely rewritten**
+  - Now dynamically folds/unfolds as you navigate (like hyperlist.vim)
+  - Entering presentation mode (C-P) now stays on the current item instead of jumping to the first line
+  - Moving up/down properly reveals the path to the current item while folding everything else
+  - Uses proper item tracking via real indices to handle fold state changes correctly
+
 ## [1.9.1] - 2025-12-02
 
 ### Added

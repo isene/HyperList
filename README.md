@@ -29,7 +29,14 @@ For historical context and the original VIM implementation, see: [hyperlist.vim]
 ### Help Screen
 ![HyperList Help](img/screenshot_help.png)
 
-## What's New in v1.9.1
+## What's New in v1.9.2
+
+### Presentation Mode Fixed
+- **Dynamic folding**: Presentation mode now works like hyperlist.vim - folds/unfolds dynamically as you navigate
+- **Cursor preservation**: Entering presentation mode (C-P) stays on the current item instead of jumping to the first line
+- **Proper navigation**: Moving up/down reveals the path to the current item while folding everything else
+
+## Previous Release: v1.9.1
 
 ### External File Change Detection
 - **Auto-detect external changes**: HyperList now monitors when the file is modified by other processes (vim, another Claude Code session, etc.)
