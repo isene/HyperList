@@ -29,9 +29,21 @@ For historical context and the original VIM implementation, see: [hyperlist.vim]
 ### Help Screen
 ![HyperList Help](img/screenshot_help.png)
 
-## What's New in v1.9.0
+## What's New in v1.9.1
 
-### 🏷️ Item Tagging & Batch Operations
+### External File Change Detection
+- **Auto-detect external changes**: HyperList now monitors when the file is modified by other processes (vim, another Claude Code session, etc.)
+- **Reload prompt**: Shows "File changed externally. Reload? (y/n)" when changes are detected
+- **Cursor preservation**: Your cursor position is preserved after reload
+- **Skip option**: Press 'n' to ignore external changes and continue editing
+
+### Bug Fix: Quote Coloring in Comments
+- Fixed an issue where quotes inside parentheses (comments) like `(this is a "comment" in here)` would break the cyan coloring
+- The entire parentheses content now stays cyan as intended
+
+## Previous Release: v1.9.0
+
+### Item Tagging & Batch Operations
 - **Tag items**: Press 't' to tag/untag items for batch operations
 - **Auto-advance**: Cursor automatically moves to next item after tagging for fast consecutive tagging
 - **Visual feedback**: Tagged items show dark blue background, lighter blue when selected
@@ -41,47 +53,47 @@ For historical context and the original VIM implementation, see: [hyperlist.vim]
 - **Batch operations**: Delete (D/C-D), yank (y/Y), and indent (Tab/S-Tab) work on all tagged items
 - Tag consecutive or non-consecutive items, then perform operations on the entire set
 
-### ✏️ External Editor Support
+### External Editor Support
 - **Edit in $EDITOR**: Press 'E' to spawn your preferred editor (vim, nano, emacs, etc.)
 - **Seamless workflow**: File saved automatically, editor launched, changes reloaded on exit
 - **Terminal management**: Terminal state properly saved and restored
 - Uses `$EDITOR` environment variable (defaults to vi if not set)
 
-### 📋 Enhanced Paste & Navigation
+### Enhanced Paste & Navigation
 - **Paste above**: Press 'P' to paste above current item (vim-style)
 - **Paste below**: Press 'p' to paste below current item (existing)
 - **Presentation mode**: Moved to 'C-P' (was 'P') for consistency
 - **Templates**: Moved to 'T' key (was 't')
 - **Undo**: Moved to 'U' key (was 'u') - consistent with RTFM
 
-### 🎯 Smart Modified Flag
+### Smart Modified Flag
 - **Intelligent tracking**: `[+]` indicator automatically removed when undoing back to original file state
 - **Clean status**: No false "modified" indicator after complete undo to original
 
 ## Previous Release: v1.8.0
 
-### 📋 Multi-Line Paste Support
+### Multi-Line Paste Support
 - **Paste multiple lines**: When pasting multi-line content into item insertion prompts ('o', 'O', 'a', 'A'), each line becomes a separate item
 - **Visual feedback**: Shows `[+N lines]` indicator during multi-line paste
 - **Smart insertion**: All pasted lines inserted as siblings at the same level
 - Great for importing bullet lists from PDFs, emails, or other documents
 - Requires rcurses 6.1.5+
 
-### 📄 PDF/LaTeX Export
+### PDF/LaTeX Export
 - **Export to PDF**: `:export pdf filename.pdf` - Full LaTeX-based PDF generation
 - **Export to LaTeX**: `:export latex filename.tex` - Get the LaTeX source
 - **Professional output**: Color-coded elements, table of contents, headers
 - **Complete HyperList support**: All syntax elements rendered beautifully
 - Requires: texlive-latex-base and texlive-latex-extra packages
 
-### 📋 System Clipboard Integration
+### System Clipboard Integration
 - **Yank to clipboard**: 'y' and 'Y' now copy to system clipboard
 - **Middle-click paste**: Yanked items can be pasted into other terminals
 - **Preserves indentation**: Copied text maintains proper structure
 
 ## Previous Version Features (v1.4.0)
 
-### 🎨 Configuration Lines & Theming
+### Configuration Lines & Theming
 - **Configuration Lines**: Add settings at the bottom of HyperList files using `((option=value, option2=value))`
 - **Theme Support**: Three color themes - `light` (bright colors), `normal` (standard), `dark` (for light terminals)
 - **Line Wrapping**: Enable with `wrap=yes` - wrapped lines use `+` prefix per HyperList spec
@@ -142,13 +154,13 @@ All `:set` commands automatically update the file's configuration line.
 - Secure AES-256-CBC encryption with PBKDF2 key derivation
 - Password caching for the session
 
-### 🎯 Enhanced Presentation Mode
+### Enhanced Presentation Mode
 - **Auto-collapse** everything outside the current context
 - **Smart focus**: Shows only current item, ancestors, and immediate children
 - **Visual hierarchy**: Focused items in full color, others greyed out
 - Improved navigation with proper cursor tracking
 
-### 🎨 Better Visual Experience
+### Better Visual Experience
 - **Improved highlighting**: Dark gray background preserves syntax colors
 - **Subtle selection**: No more harsh reverse video
 - **Preserved colors**: All HyperList elements maintain their colors when selected

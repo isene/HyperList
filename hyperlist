@@ -7,7 +7,7 @@
 # Check for help/version BEFORE loading any libraries
 if ARGV[0] == '-h' || ARGV[0] == '--help'
   puts <<~HELP
-    HyperList v1.9.0 - Terminal User Interface for HyperList files
+    HyperList v1.9.1 - Terminal User Interface for HyperList files
     
     USAGE
       hyperlist [OPTIONS] [FILE]
@@ -52,7 +52,7 @@ if ARGV[0] == '-h' || ARGV[0] == '--help'
   HELP
   exit 0
 elsif ARGV[0] == '-v' || ARGV[0] == '--version'
-  puts "HyperList v1.9.0"
+  puts "HyperList v1.9.1"
   exit 0
 end
 
@@ -73,7 +73,7 @@ class HyperListApp
   include Rcurses::Input
   include Rcurses::Cursor
   
-  VERSION = "1.9.0"
+  VERSION = "1.9.1"
   
   def initialize(filename = nil)
     @filename = filename ? File.expand_path(filename) : nil
@@ -124,7 +124,8 @@ class HyperListApp
     @split_offset = 0  # Second view scroll offset
     @active_pane = :main  # :main or :split
     @message_timeout = nil  # For timed message display
-    
+    @file_mtime = nil  # Track file modification time for external change detection
+
     # Global configuration
     @config_file = File.expand_path("~/.hyperlist/config.yml")
     @indent_size = 2  # Default indentation (2-5 spaces)
@@ -227,6 +228,9 @@ class HyperListApp
     @encrypted_lines = {}
     @config_line = nil  # Reset config line before loading
     @tagged_items = []  # Clear tags when loading new file
+
+    # Track file modification time for external change detection
+    @file_mtime = File.mtime(file) rescue nil
 
     # Read file content
     content = File.read(file) rescue ""
@@ -527,12 +531,48 @@ class HyperListApp
   def load_command_history
     history_file = File.expand_path("~/.hyperlist_command_history")
     return [] unless File.exist?(history_file)
-    
+
     File.readlines(history_file).map(&:strip).reject(&:empty?).last(100)
   rescue
     []
   end
-  
+
+  # Check if file was modified externally and prompt for reload
+  def check_file_changed
+    return unless @filename && File.exist?(@filename) && @file_mtime
+
+    current_mtime = File.mtime(@filename) rescue nil
+    return unless current_mtime && current_mtime > @file_mtime
+
+    # File changed externally - prompt user
+    @footer.text = "File changed externally. Reload? (y/n): "
+    @footer.refresh
+
+    response = getchr
+    if response&.downcase == 'y'
+      # Save cursor position
+      saved_current = @current
+      saved_offset = @offset
+
+      load_file(@filename)
+
+      # Restore cursor position (clamped to new file size)
+      visible = get_visible_items
+      @current = [saved_current, visible.length - 1, 0].max
+      @current = [@current, visible.length - 1].min if visible.length > 0
+      @offset = saved_offset
+
+      @message = "File reloaded"
+      @modified = false
+      clear_cache
+      render
+    else
+      # Update mtime to avoid repeated prompts
+      @file_mtime = current_mtime
+      @message = "External changes ignored"
+    end
+  end
+
   def save_command_history
     history_file = File.expand_path("~/.hyperlist_command_history")
     File.open(history_file, 'w') do |f|
@@ -712,6 +752,7 @@ class HyperListApp
     @modified = false
     @original_items = @items.map { |item| item.dup }  # Save state after save
     @last_auto_save = Time.now if @auto_save_enabled
+    @file_mtime = File.mtime(@filename) rescue nil  # Update mtime after save
   end
   
   def check_auto_save
@@ -1606,9 +1647,10 @@ class HyperListApp
     
     # Handle parentheses content (moved here to avoid conflicts with properties)
     # Based on hyperlist.vim: '(.\{-})'
+    # Color entire parentheses content as cyan - quotes inside are also cyan
     result = safe_regex_replace(result, /\(([^)]*)\)/) do |match|
-      content = match[1..-2]  # Extract content between parentheses
-      "(".fg(colors["cyan"]) + content.fg(colors["cyan"]) + ")".fg(colors["cyan"])
+      # Just color the whole thing cyan - no special handling for quotes inside
+      match.fg(colors["cyan"])
     end
     
     # Handle semicolons as separators (they separate items on the same line)
@@ -1624,11 +1666,17 @@ class HyperListApp
     
     # Handle quoted strings (only double quotes are special in HyperList)
     # Based on hyperlist.vim: '".\{-}"'
-    result.gsub!(/"([^"]*)"/) do
-      content = $1
+    # Use safe_regex_replace to avoid processing quotes inside already-colored parentheses
+    result = safe_regex_replace(result, /"([^"]*)"/) do |match|
+      content = match[1..-2]  # Extract content between quotes
       # Color any ## sequences inside the quotes as red
-      content.gsub!(/(##[<>-]+)/) { $1.fg(colors["red"]) }
-      '"'.fg(colors["cyan"]) + content.fg(colors["cyan"]) + '"'.fg(colors["cyan"])  # Cyan for quoted strings
+      colored_content = content.gsub(/(##[<>-]+)/) { $1.fg(colors["red"]) }
+      # If no ## sequences were found, just color the whole thing cyan
+      if colored_content == content
+        match.fg(colors["cyan"])  # Color entire quoted string cyan
+      else
+        '"'.fg(colors["cyan"]) + colored_content + '"'.fg(colors["cyan"])
+      end
     end
     
     # Handle change markup - all double-hashes should be red
@@ -6397,7 +6445,10 @@ class HyperListApp
     loop do
       # Check for auto-save
       check_auto_save if @auto_save_enabled
-      
+
+      # Check for external file changes
+      check_file_changed
+
       c = getchr
       
       # Skip nil input (shouldn't happen normally)

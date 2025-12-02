@@ -2,6 +2,49 @@
 
 All notable changes to the HyperList Ruby TUI will be documented in this file.
 
+## [1.9.1] - 2025-12-02
+
+### Added
+- **External file change detection**
+  - Automatically detects when the file is modified by other processes (vim, another Claude Code session, etc.)
+  - Prompts user to reload with "File changed externally. Reload? (y/n)"
+  - Preserves cursor position after reload
+  - Option to ignore external changes (updates internal timestamp to avoid repeated prompts)
+
+### Fixed
+- **Quote coloring inside parentheses (comments)**
+  - Fixed issue where quotes inside parentheses like `(this is a "comment" in here)` would break the cyan coloring
+  - The closing quote would terminate coloring, leaving the rest of the comment white
+  - Now the entire parentheses content stays cyan as intended
+
+## [1.9.0] - 2025-10-24
+
+### Added
+- **Item Tagging & Batch Operations**
+  - Tag items with 't' key for batch operations (auto-advance cursor)
+  - Visual feedback: dark blue background for tagged items, lighter blue for tagged+selected
+  - Status bar shows [T:N] count of tagged items
+  - Clear all tags with 'u' key
+  - Regex tagging with 'C-T' - tag all items matching a pattern
+  - Batch operations: D/C-D (delete), y/Y (yank), Tab/S-Tab (indent) work on all tagged items
+
+- **External Editor Support**
+  - Press 'E' to spawn $EDITOR (vim, nano, etc.)
+  - Automatic save/reload workflow
+  - Proper terminal state management
+  - Full screen refresh on return
+
+- **Enhanced Paste & Navigation**
+  - 'P' to paste above current item (vim-style)
+  - Presentation mode moved to 'C-P'
+  - Templates moved to 'T' key
+  - Undo moved to 'U' key (RTFM-consistent)
+
+### Enhanced
+- **Smart Modified Flag**
+  - [+] indicator removed when undoing back to original file state
+  - Tracks original state to detect true modifications
+
 ## [1.8.0] - 2025-09-22
 
 ### Enhanced
