@@ -2,6 +2,18 @@
 
 All notable changes to the HyperList Ruby TUI will be documented in this file.
 
+## [1.9.4] - 2025-12-02
+
+### Enhanced
+- **Property coloring improvements**
+  - Added `&` symbol support in properties (e.g., "Day 1 & 2:" now colors correctly)
+  - Added chained property support (e.g., "09.03: Silje:" now colors the entire chain red)
+
+### Fixed
+- **Performance optimization**
+  - Throttled external file change detection to run every 2 seconds instead of on every keypress
+  - Improves responsiveness when holding navigation keys (UP/DOWN)
+
 ## [1.9.3] - 2025-12-02
 
 ### Fixed

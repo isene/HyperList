@@ -7,7 +7,7 @@
 # Check for help/version BEFORE loading any libraries
 if ARGV[0] == '-h' || ARGV[0] == '--help'
   puts <<~HELP
-    HyperList v1.9.3 - Terminal User Interface for HyperList files
+    HyperList v1.9.4 - Terminal User Interface for HyperList files
     
     USAGE
       hyperlist [OPTIONS] [FILE]
@@ -52,7 +52,7 @@ if ARGV[0] == '-h' || ARGV[0] == '--help'
   HELP
   exit 0
 elsif ARGV[0] == '-v' || ARGV[0] == '--version'
-  puts "HyperList v1.9.3"
+  puts "HyperList v1.9.4"
   exit 0
 end
 
@@ -73,7 +73,7 @@ class HyperListApp
   include Rcurses::Input
   include Rcurses::Cursor
   
-  VERSION = "1.9.3"
+  VERSION = "1.9.4"
   
   def initialize(filename = nil)
     @filename = filename ? File.expand_path(filename) : nil
@@ -538,8 +538,15 @@ class HyperListApp
   end
 
   # Check if file was modified externally and prompt for reload
+  # Throttled to only check every 2 seconds to avoid filesystem I/O on every keypress
   def check_file_changed
     return unless @filename && File.exist?(@filename) && @file_mtime
+
+    # Throttle: only check every 2 seconds
+    now = Time.now
+    @last_file_check ||= Time.at(0)
+    return if (now - @last_file_check) < 2
+    @last_file_check = now
 
     current_mtime = File.mtime(@filename) rescue nil
     return unless current_mtime && current_mtime > @file_mtime
@@ -1619,18 +1626,35 @@ class HyperListApp
       "#{$1}:".fg(colors["red"])  # Red for timestamp properties
     end
     
-    # Handle operators and properties with colon pattern
+    # Handle chained properties first (e.g., "09.03: Silje: Opening")
+    # Match sequences of "word: word: word:" at the start of a line, color all red
+    result = safe_regex_replace(result, /^(\s*)((?:[a-zA-Z0-9][a-zA-Z0-9_\-()& .\/=]*:\s*)+)/) do |match|
+      if match =~ /^(\s*)((?:[a-zA-Z0-9][a-zA-Z0-9_\-()& .\/=]*:\s*)+)/
+        prefix = $1 || ""
+        chain = $2
+        # Check if this is an operator (ALL-CAPS only)
+        if chain =~ /^[A-Z][A-Z_\-() \/=]*:\s*$/
+          prefix + chain.fg(colors["blue"])  # Blue for operators
+        else
+          prefix + chain.fg(colors["red"])  # Red for property chains
+        end
+      else
+        match
+      end
+    end
+
+    # Handle operators and properties with colon pattern (for inline occurrences)
     # Operators: ALL-CAPS followed by colon (with or without space)
     # Properties: Mixed case followed by colon and space
     # Modified pattern to also match after ANSI placeholders (⟨ANSI\d+⟩)
-    result = safe_regex_replace(result, /(\A|\s+|⟨ANSI\d+⟩)([a-zA-Z][a-zA-Z0-9_\-() .\/=]*):(\s*)/) do |match|
+    result = safe_regex_replace(result, /(\s+|⟨ANSI\d+⟩)([a-zA-Z][a-zA-Z0-9_\-()& .\/=]*):(\s*)/) do |match|
       # Extract parts from the match
-      if match =~ /(\A|\s+|⟨ANSI\d+⟩)([a-zA-Z][a-zA-Z0-9_\-() .\/=]*):(\s*)/
+      if match =~ /(\s+|⟨ANSI\d+⟩)([a-zA-Z][a-zA-Z0-9_\-()& .\/=]*):(\s*)/
         prefix_space = $1
         text_part = $2
         space_after = $3 || ""
         colon_space = ":#{space_after}"
-        
+
         # Check if it's an operator (ALL-CAPS with optional _, -, (), /, =, spaces)
         if text_part =~ /^[A-Z][A-Z_\-() \/=]*$/
           prefix_space + text_part.fg(colors["blue"]) + colon_space.fg(colors["blue"])  # Blue for operators (including S: and T:)

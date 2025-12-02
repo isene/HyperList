@@ -29,7 +29,17 @@ For historical context and the original VIM implementation, see: [hyperlist.vim]
 ### Help Screen
 ![HyperList Help](img/screenshot_help.png)
 
-## What's New in v1.9.3
+## What's New in v1.9.4
+
+### Property Coloring Improvements
+- **Ampersand support**: Properties like "Day 1 & 2:" now color correctly
+- **Chained properties**: Lines like "09.03: Silje: Opening" now color the entire "09.03: Silje:" chain red
+
+### Performance Optimization
+- **Faster navigation**: File change detection now runs every 2 seconds instead of on every keypress
+- Improved responsiveness when holding DOWN/UP keys
+
+## Previous Release: v1.9.3
 
 ### Help Viewer Navigation Fixed
 - Fixed invisible cursor on blank separator lines in help (?) and documentation (??) viewers
