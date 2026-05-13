@@ -73,7 +73,7 @@ class HyperListApp
   include Rcurses::Input
   include Rcurses::Cursor
   
-  VERSION = "1.9.4"
+  VERSION = "1.9.6"
   
   def initialize(filename = nil)
     @filename = filename ? File.expand_path(filename) : nil
@@ -1514,7 +1514,7 @@ class HyperListApp
         marker = $2
         content = $3 || ""
         # Apply underline to content after the marker
-        result = prefix + marker + content.u
+        result = prefix + marker + content.ul
       end
     elsif @st_underline_mode == 2
       # Underline transitions
@@ -1523,7 +1523,7 @@ class HyperListApp
         marker = $2
         content = $3 || ""
         # Apply underline to content after the marker
-        result = prefix + marker + content.u
+        result = prefix + marker + content.ul
       end
     end
     
@@ -1596,7 +1596,7 @@ class HyperListApp
       processed_checkbox = true
     elsif result =~ /^(\s*)(\[O\])/
       spaces = $1
-      colored = "[O]".fg(colors["green"]).b
+      colored = "[O]".fg(colors["green"]).bd
       result = result.sub(/^(\s*)(\[O\])/, "#{spaces}#{colored}")  # Bold bright green for in-progress
       processed_checkbox = true
     elsif result =~ /^(\s*)(\[-\])/
@@ -1734,13 +1734,13 @@ class HyperListApp
     # Handle text formatting (bold, italic, underline)
     # Based on hyperlist.vim patterns with tab/space boundaries
     # Bold: '\(\t\| \)\@<=\*.\{-}\*\($\| \)\@='
-    result.gsub!(/(?<=\s|\A)\*([^*]+)\*(?=\s|\z)/) { $1.b }
+    result.gsub!(/(?<=\s|\A)\*([^*]+)\*(?=\s|\z)/) { $1.bd }
     
     # Italic: '\(\t\| \)\@<=/.\{-}/\($\| \)\@='
-    result.gsub!(/(?<=\s|\A)\/([^\/]+)\/(?=\s|\z)/) { $1.i }
+    result.gsub!(/(?<=\s|\A)\/([^\/]+)\/(?=\s|\z)/) { $1.it }
     
     # Underline: '\(\t\| \)\@<=_.\{-}_\($\| \)\@='
-    result.gsub!(/(?<=\s|\A)_([^_]+)_(?=\s|\z)/) { $1.u }
+    result.gsub!(/(?<=\s|\A)_([^_]+)_(?=\s|\z)/) { $1.ul }
     
     result
   end
@@ -3772,7 +3772,7 @@ class HyperListApp
     help_lines = []
     help_lines << " Press #{"?".fg("10")} for full documentation, #{"UP/DOWN".fg("10")} to scroll, or any other key to return"
     help_lines << " "
-    help_lines << "#{"HYPERLIST KEY BINDINGS".b}"
+    help_lines << "#{"HYPERLIST KEY BINDINGS".bd}"
     help_lines << " "
     help_lines << "#{"NAVIGATION".fg("14")}"
     help_lines << help_line("#{"j/↓".fg("10")}", "Move down", "#{"k/↑".fg("10")}", "Move up")
@@ -3848,7 +3848,7 @@ class HyperListApp
     help_lines << help_line("#{"q".fg("10")}", "Quit (asks to save)", "#{"Q".fg("10")}", "Force quit")
     help_lines << ""
     help_lines << "#{"COLOR SCHEME".fg("14")}"
-    help_lines << help_line("#{"[X]".fg("10")}", "Completed", "#{"[O]".fg("10").b}", "In progress")
+    help_lines << help_line("#{"[X]".fg("10")}", "Completed", "#{"[O]".fg("10").bd}", "In progress")
     help_lines << help_line("#{"[ ]".fg("22")}", "Unchecked", "#{"[-]".fg("2")}", "Partial")
     help_lines << help_line("#{"[?]".fg("2")}", "Conditionals", "#{"AND:".fg("4")}", "Operators")
     help_lines << help_line("#{"Date:".fg("1")}", "Properties", "#{"<ref>".fg("5")}", "References")
@@ -3920,7 +3920,7 @@ class HyperListApp
   def show_documentation
     doc = <<~DOC
     
-    #{"HYPERLIST DOCUMENTATION".b}
+    #{"HYPERLIST DOCUMENTATION".bd}
     #{"Version 2.6 - Complete Specification".fg("245")}
     
     #{"Official HyperList Page:".fg("14")} #{"https://isene.org/hyperlist/".fg("5")}
@@ -3928,7 +3928,7 @@ class HyperListApp
     
     #{"═" * 60}
     
-    #{"OVERVIEW".b}
+    #{"OVERVIEW".bd}
     
     HyperList represents a way to describe anything - any state or any
     transition. It represents data in tree-structure lists with a very
@@ -3943,7 +3943,7 @@ class HyperListApp
     
     #{"═" * 60}
     
-    #{"HYPERLIST ITEM STRUCTURE".b}
+    #{"HYPERLIST ITEM STRUCTURE".bd}
     
     A HyperList Item consists of these parts in sequence:
     
@@ -3965,14 +3965,14 @@ class HyperListApp
     
     #{"═" * 60}
     
-    #{"BASIC STRUCTURE".b}
+    #{"BASIC STRUCTURE".bd}
     
     • Items are organized hierarchically using TAB indentation
     • Each level of indentation represents a deeper level
     • Children add information to their parents
     • A separator between items reads as "then" or "and"
     
-    #{"CHECKBOXES".b}
+    #{"CHECKBOXES".bd}
     
     [_]  Unchecked item (underscore placeholder)
     [ ]  Unchecked item (space placeholder)
@@ -3985,7 +3985,7 @@ class HyperListApp
     Use 'V' to toggle with automatic timestamp on completion.
     Format: [x] YYYY-MM-DD HH.MM: (timestamp after checkbox)
     
-    #{"QUALIFIERS".b}
+    #{"QUALIFIERS".bd}
     
     Qualifiers in square brackets tell how many times, when, or under
     what conditions an item exists or is executed:
@@ -4004,7 +4004,7 @@ class HyperListApp
     Complex example:
     [2..7, Raining, Temp<5°C] Do item 2-7 times while raining and cold
     
-    #{"TIMESTAMPS".b}
+    #{"TIMESTAMPS".bd}
     
     ISO-8601 format: YYYY-MM-DD HH.MM.SS (can be shortened)
     
@@ -4023,7 +4023,7 @@ class HyperListApp
     [YYYY-MM-03]           Every 3rd of every month
     [Tue,Fri 12.00]        Noon every Tuesday and Friday
     
-    #{"PROPERTIES".b}
+    #{"PROPERTIES".bd}
     
     Any text followed by colon is a property (displayed in red):
     
@@ -4032,7 +4032,7 @@ class HyperListApp
     2025-08-11 14.30: Meeting starts
     State: Active
     
-    #{"OPERATORS".b}
+    #{"OPERATORS".bd}
     
     ALL CAPS followed by colon (displayed in blue):
     
@@ -4051,7 +4051,7 @@ class HyperListApp
     EXAMPLES:   List of examples follows
     CHOOSE:     Select from options
     
-    #{"REFERENCES".b}
+    #{"REFERENCES".bd}
     
     Enclosed in angle brackets < > (displayed in magenta):
     
@@ -4074,7 +4074,7 @@ class HyperListApp
     <https://url.com>      External URL
     <file:/path/to/file>   File reference
     
-    #{"TEXT FORMATTING".b}
+    #{"TEXT FORMATTING".bd}
     
     *bold text*        Bold formatting
     /italic text/      Italic formatting
@@ -4082,7 +4082,7 @@ class HyperListApp
     
     Formatting can be combined and nested.
     
-    #{"ADDITIVES".b}
+    #{"ADDITIVES".bd}
     
     #{"Comments".fg("6")} (in parentheses):
     (This is a comment)        Not executed in transitions
@@ -4097,7 +4097,7 @@ class HyperListApp
     #TODO #important           Markers for categorization
     #ProjectAlpha              No spaces allowed in tags
     
-    #{"SUBSTITUTIONS".b}
+    #{"SUBSTITUTIONS".bd}
     
     Use curly brackets for variable substitution:
     
@@ -4107,7 +4107,7 @@ class HyperListApp
     Ask user for input; Use {input}
     → Variable from user interaction
     
-    #{"MULTI-LINE ITEMS".b}
+    #{"MULTI-LINE ITEMS".bd}
     
     Use + prefix for items spanning multiple lines:
     
@@ -4117,7 +4117,7 @@ class HyperListApp
     If one item at a level is multi-line, all items at that
     level must start with + or an identifier.
     
-    #{"SEPARATORS".b}
+    #{"SEPARATORS".bd}
     
     Newline → "then" (for sequence) or "and" (for children)
     Semicolon → Compact multiple items on one line
@@ -4131,7 +4131,7 @@ class HyperListApp
     Task A; Task B; Task C
     → Task A then Task B then Task C
     
-    #{"CHANGE MARKUP".b}
+    #{"CHANGE MARKUP".bd}
     
     Special tags for document editing:
     
@@ -4141,7 +4141,7 @@ class HyperListApp
     ##->             Indent item right  
     ##Text##         Mark item as changed
     
-    #{"LITERAL BLOCKS".b}
+    #{"LITERAL BLOCKS".bd}
     
     Escape HyperList interpretation with backslash blocks:
     
@@ -4151,7 +4151,7 @@ class HyperListApp
     Until the closing backslash
     \\
     
-    #{"EXAMPLES".b}
+    #{"EXAMPLES".bd}
     
     #{"Simple Todo List:".fg("1")}
     [ ] Buy groceries
@@ -4187,7 +4187,7 @@ class HyperListApp
     
     #{"═" * 60}
     
-    #{"COMPLETE HYPERLIST DEFINITION (from specification v2.6)".b}
+    #{"COMPLETE HYPERLIST DEFINITION (from specification v2.6)".bd}
     
     HyperList
       [1+] HyperList Item

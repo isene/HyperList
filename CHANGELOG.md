@@ -2,6 +2,13 @@
 
 All notable changes to the HyperList Ruby TUI will be documented in this file.
 
+## [1.9.6] - 2026-05-11
+
+### Fixed
+- Rename rcurses string-styling methods to match rcurses 7.0.0:
+  `.b → .bd`, `.i → .it`, `.u → .ul`. Without this, HyperList crashed
+  on first render against rcurses 7+. Fixes #1.
+
 ## [1.9.4] - 2025-12-02
 
 ### Enhanced
