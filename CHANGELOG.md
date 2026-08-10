@@ -2,6 +2,20 @@
 
 All notable changes to the HyperList Ruby TUI will be documented in this file.
 
+## [1.9.7] - 2026-08-10
+
+### Added
+- HyperList definition v2.7: the `[?!]` fallback Qualifier, read as
+  "otherwise". Applies when no preceding sibling Qualifier at the same
+  indent did, so a fallback binds to the Items above it instead of
+  restating the condition negated. Added to the built-in syntax
+  reference and the embedded self-definition.
+
+### Fixed
+- Graphviz export treated `[?!]` as an ordinary condition and emitted
+  `tooltip="Condition: ?!"`. It now renders as a dashed diamond with no
+  tooltip, since a fallback is not a condition.
+
 ## [1.9.6] - 2026-05-11
 
 ### Fixed

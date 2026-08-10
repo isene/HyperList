@@ -73,7 +73,7 @@ class HyperListApp
   include Rcurses::Input
   include Rcurses::Cursor
   
-  VERSION = "1.9.6"
+  VERSION = "1.9.7"
   
   def initialize(filename = nil)
     @filename = filename ? File.expand_path(filename) : nil
@@ -3991,6 +3991,7 @@ class HyperListApp
     what conditions an item exists or is executed:
     
     [?]              Optional item
+    [?!]             Otherwise (no preceding sibling Qualifier applied)
     [3]              Do item 3 times
     [1+]             Do item 1 or more times  
     [2..5]           Do item 2 to 5 times
@@ -4251,6 +4252,10 @@ class HyperListApp
                 Do Item 1 or more times while "Bob is polite" = "[1+, Bob is polite]"
                 Do Item up to 4 times only while "zoo=0" = "[<4, zoo=0]"
               Optional Item = "[?]"
+              Fallback Item = "[?!]"
+                Read as "otherwise"
+                Applies when no preceding sibling Qualifier applied
+                Valid only as the last Item of such a group
               Timestamp Qualifier = "[YYYY-MM-DD hh.mm.ss]"
                 Shorten the format to the appropriate granularity
               Time relations
@@ -6190,6 +6195,11 @@ class HyperListApp
         case qualifier
         when "?"
           attributes << "shape=diamond"  # Optional items as diamonds
+        when "?!"
+          # Fallback ("otherwise"): the branch taken when no preceding
+          # sibling Qualifier applied. Not a condition, so no tooltip.
+          attributes << "shape=diamond"
+          attributes << "style=dashed"
         when "_"
           label = "☐ #{label}"
           attributes[0] = "label=\"#{label}\""
