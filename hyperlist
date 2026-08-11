@@ -73,7 +73,7 @@ class HyperListApp
   include Rcurses::Input
   include Rcurses::Cursor
   
-  VERSION = "1.9.7"
+  VERSION = "1.10.0"
   
   def initialize(filename = nil)
     @filename = filename ? File.expand_path(filename) : nil
@@ -1207,7 +1207,7 @@ class HyperListApp
   
   def wrap_line(text, width, indent_level)
     # Wrap a line per HyperList spec:
-    # Multi-line items start with '+' on first line
+    # Multi-line items start with a Neutral Starter ('+' or '-')
     # Continuation lines have just a space prefix
     return [text] unless @wrap
     
@@ -3948,8 +3948,10 @@ class HyperListApp
     A HyperList Item consists of these parts in sequence:
     
     1. #{"Starter".fg("5")} (optional)
-       • Identifier: Numbers (1.1.1) or mixed (1A1A)
-       • Multi-line indicator: + (plus sign)
+       • Neutral Starter: "+ " or "- " — marks where an Item begins
+       • Identifier: Numbers (1.1.1) or mixed (1A1A) — also unique
+       Required only when an Item spans more than one line; its following
+       lines are indented two spaces beyond the Item's own indent
     
     2. #{"Type".fg("5")} (optional)
        • State: S: or |
@@ -4193,12 +4195,15 @@ class HyperListApp
     HyperList
       [1+] HyperList Item
         [?] Starter; OR:
+          Neutral Starter = "+ " or "- "
+            Marks where an Item begins and carries no further meaning
           Identifier (Numbers: Format = "1.1.1.1", Mixed: Format = "1A1A")
-            [? Multi-line Item] The Identifier acts like the plus sign ("+")
-          Multi-line Indicator = "+"
-            + If one Item on a certain indent is multi-line, all Items on the same indent
-             (including single-line Items) must start with a plus sign ("+") or <Identifier>
-             and all lines on the same indent after the first line must start with a space
+            Unique, so the Item can be referred to; also acts as a Starter
+          + An Item spanning more than one line must have a Starter, and its
+            following lines are indented two spaces beyond the Item's own indent
+            One level of indentation is at least three columns wide, so a
+             continuation line can never be read as a child
+            No requirement falls on the other Items at the same indent
         [?] Type
           OR:
             State = "S:" or "|"

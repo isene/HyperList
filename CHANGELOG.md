@@ -2,6 +2,16 @@
 
 All notable changes to the HyperList Ruby TUI will be documented in this file.
 
+## [1.10.0] - 2026-08-11
+
+### Changed
+- HyperList definition v2.8: `+` and `-` are Neutral Starters marking where
+  an Item begins, carrying no further meaning. A Starter is required only on
+  an Item that spans more than one line, and its following lines are now
+  indented two spaces beyond the Item's own indent rather than one. The rule
+  forcing every sibling at the same indent to carry a Starter has been
+  dropped. Built-in syntax reference and embedded self-definition updated.
+
 ## [1.9.7] - 2026-08-10
 
 ### Added
