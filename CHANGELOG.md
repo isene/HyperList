@@ -2,6 +2,14 @@
 
 All notable changes to the HyperList Ruby TUI will be documented in this file.
 
+## [1.11.0] - 2026-08-13
+
+### Changed
+- Starters are magenta rather than red. `+` and `-` are line-leading
+  structure markers, the same role a numbering Identifier plays, so they
+  share its colour instead of sitting with Properties and dates.
+- The `-` Starter is now coloured as well, not only `+`.
+
 ## [1.10.0] - 2026-08-11
 
 ### Changed

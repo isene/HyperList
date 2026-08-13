@@ -73,7 +73,7 @@ class HyperListApp
   include Rcurses::Input
   include Rcurses::Cursor
   
-  VERSION = "1.10.0"
+  VERSION = "1.11.0"
   
   def initialize(filename = nil)
     @filename = filename ? File.expand_path(filename) : nil
@@ -1575,10 +1575,11 @@ class HyperListApp
       result = result.sub(/^[0-9][0-9A-Z.]*\s/, identifier.fg(colors["magenta"]))  # Magenta for identifiers
     end
     
-    # Handle multi-line indicator at the beginning (+ with space)
-    # Based on hyperlist.vim: '^\(\t\|\*\)*+ '
-    if result =~ /^\+\s/
-      result = result.sub(/^(\+\s)/, "+".fg(colors["red"]) + " ")  # Red for multi-line indicator
+    # Handle the Starter at the beginning (+ or - with space)
+    # Based on hyperlist.vim: '^\(\t\|\*\)*[+-] '. Magenta, the same as a
+    # numbering Identifier: both are line-leading structure markers.
+    if result =~ /^[+-]\s/
+      result = result.sub(/^([+-])\s/) { "#{$1}".fg(colors["magenta"]) + " " }
     end
     
     # Handle continuation markers (+ at start of indented lines in References section)
