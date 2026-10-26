@@ -2,6 +2,20 @@
 
 All notable changes to the HyperList Ruby TUI will be documented in this file.
 
+## [1.12.0] - 2026-10-26
+
+### Changed
+- Wrap mode follows HyperList 2.9: when one Item runs past the line, every
+  Item in its group (same indent, same parent) gets a `+` Starter, and the
+  wrapped part is indented two spaces.
+- A Starter is `+ ` or an Identifier such as `1 ` or `1.2 `. `-` is plain
+  text again and no longer coloured.
+- Lists whose continuation lines are indented one space (older files) or
+  two spaces (2.8 on) both load as multi-line Items.
+
+### Fixed
+- `indent_size` in a config line crashed the app; it is read as a number now.
+
 ## [1.11.0] - 2026-08-13
 
 ### Changed

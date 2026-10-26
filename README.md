@@ -119,7 +119,7 @@ For historical context and the original VIM implementation, see: [hyperlist.vim]
 ### Configuration Lines & Theming
 - **Configuration Lines**: Add settings at the bottom of HyperList files using `((option=value, option2=value))`
 - **Theme Support**: Three color themes - `light` (bright colors), `normal` (standard), `dark` (for light terminals)
-- **Line Wrapping**: Enable with `wrap=yes` - wrapped lines use `+` prefix per HyperList spec
+- **Line Wrapping**: Enable with `wrap=yes` - a long Item and the rest of its group get a `+` Starter (HyperList 2.9)
 - **Line Numbers**: Enable with `show_numbers=yes`
 - **Manual Configuration**: Use `:set option=value` to change settings on the fly
 - **View Settings**: Use `:set` to see all settings, `:set option` to see one setting

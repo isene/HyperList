@@ -73,7 +73,7 @@ class HyperListApp
   include Rcurses::Input
   include Rcurses::Cursor
   
-  VERSION = "1.11.0"
+  VERSION = "1.12.0"
   
   def initialize(filename = nil)
     @filename = filename ? File.expand_path(filename) : nil
@@ -291,18 +291,14 @@ class HyperListApp
       is_continuation = false
       if @items.length > 0
         last_item = @items.last
-        # Check if previous item started with + (multi-line indicator)
-        if last_item["text"].strip.start_with?("+")
-          # For continuation lines, we expect: same indent level + one space prefix
-          # Calculate the expected spaces for a continuation line
-          expected_spaces = last_item["level"] * @indent_size + 1
-          actual_spaces = line[/^ */].length
-          
-          # Check if this matches the continuation pattern
-          if actual_spaces == expected_spaces
-            # This is a continuation line - append it to the previous item
-            continuation_text = line[expected_spaces..-1] || ""
-            last_item["text"] += "\n " + continuation_text
+        # Only an Item with a Starter spans lines. Its following lines sit
+        # two spaces beyond its indent (HyperList 2.8 on), or one in older
+        # files. With a two-space indent, two spaces is a child instead.
+        if starter?(last_item["text"])
+          indent = last_item["level"] * @indent_size
+          extra = line[/^ */].length - indent
+          if extra == 1 || (extra == 2 && @indent_size >= 3)
+            last_item["text"] += "\n" + line[indent..]
             next  # Skip adding as a new item
           end
         end
@@ -427,7 +423,7 @@ class HyperListApp
         value = $2.strip
         # Convert values to appropriate types
         case key
-        when "fold_level", "auto_save_interval", "tab_width"
+        when "fold_level", "auto_save_interval", "tab_width", "indent_size"
           config_options[key] = value.to_i
         when "auto_save", "wrap", "show_numbers", "highlight_current", "checkbox_date", "backup", "encrypt"
           config_options[key] = value.downcase == "true" || value.downcase == "yes"
@@ -1205,70 +1201,56 @@ class HyperListApp
   end
   
   
-  def wrap_line(text, width, indent_level)
-    # Wrap a line per HyperList spec:
-    # Multi-line items start with a Neutral Starter ('+' or '-')
-    # Continuation lines have just a space prefix
+  # An Item's Starter (HyperList 2.9): "+ " or an Identifier such as
+  # "1 ", "1.2 " or "1A1A ".
+  def starter?(text)
+    text.lstrip.match?(/\A(\+|[0-9][0-9A-Z.]*)\s/)
+  end
+
+  # Wrap a line per HyperList 2.9: an Item that runs past the line takes a
+  # Starter ("+ " unless it has one), and so does every Item of its group
+  # (`group`). Its following lines are indented two spaces. A line the file
+  # already carries as a continuation (`cont`) takes no Starter.
+  def wrap_line(text, width, indent_level, group: false, cont: false)
     return [text] unless @wrap
-    
+
     # Calculate effective width (account for indent and fold indicators)
     indent_width = @indent_size * indent_level + 2  # +2 for fold indicator
-    effective_width = width - indent_width - 5  # Extra margin for readability
-    
-    return [text] if text.length <= effective_width || effective_width <= 10
-    
-    wrapped = []
-    remaining = text.dup
-    first_line = true
-    
-    # Check if line already starts with + (multi-line indicator)
-    has_plus = text.strip.start_with?('+')
-    if has_plus
-      # Remove the + for processing, we'll add it back
-      remaining = remaining.sub(/^\s*\+\s*/, '')
+    room = width - indent_width - 5  # Extra margin for readability
+    return [text] if room <= 10
+
+    text = "+ #{text}" if !cont && (group || text.length > room) && !starter?(text)
+    lines = []
+    rest = text
+    while rest.length > room
+      cut = rest[0...room].rindex(' ')
+      cut = room if cut.nil? || cut.zero?
+      lines << rest[0...cut].rstrip
+      rest = rest[cut..].lstrip
+      room -= 2 if lines.length == 1  # the two-space lead below
     end
-    
-    while remaining && !remaining.empty?
-      if first_line
-        # First line gets the multi-line indicator if needed
-        if remaining.length <= effective_width
-          # If line already had +, it was removed earlier, so we add it back
-          # If line didn't have + but needs wrapping (wrapped.any?), add +
-          # Otherwise, leave as is
-          if has_plus
-            wrapped << "+ #{remaining}"
-          elsif wrapped.any?
-            wrapped << "+ #{remaining}"
-          else
-            wrapped << remaining
-          end
-          break
-        else
-          # Find a good break point (prefer spaces)
-          break_point = remaining[0...effective_width].rindex(' ') || effective_width
-          line_text = remaining[0...break_point].rstrip
-          # Add + to first line of multi-line items
-          wrapped << "+ #{line_text}"
-          remaining = remaining[break_point..-1].lstrip
-          first_line = false
-        end
-      else
-        # Continuation lines get just a space prefix per HyperList spec
-        cont_width = effective_width - 1  # Account for space prefix
-        if remaining.length <= cont_width
-          wrapped << " #{remaining}"
-          break
-        else
-          break_point = remaining[0...cont_width].rindex(' ') || cont_width
-          wrapped << " #{remaining[0...break_point].rstrip}"
-          remaining = remaining[break_point..-1].lstrip
-        end
-      end
-    end
-    
-    wrapped
+    lines << rest
+    [lines[0], *lines[1..].map { |l| "  #{l}" }]
   end
-  
+
+  # For each visible Item: does its group (the Items at its indent under
+  # its parent) hold an Item that spans more than one line at `width`?
+  def wrap_groups(items, width)
+    group_of = []
+    parents = []  # [level, index] of the Items above, nearest last
+    spans = Hash.new(false)
+    items.each_with_index do |item, i|
+      next unless item
+      parents.pop while parents.any? && parents.last[0] >= item["level"]
+      group_of[i] = [parents.last&.last, item["level"]]
+      parents << [item["level"], i]
+      room = width - (@indent_size * item["level"] + 2) - 5
+      lines = item["text"].split("\n")
+      spans[group_of[i]] = true if lines.length > 1 || lines.any? { |l| l.length > room }
+    end
+    group_of.map { |g| g && spans[g] }
+  end
+
   def render_main
     visible_items = get_visible_items
     
@@ -1280,6 +1262,7 @@ class HyperListApp
     # Track which line number each item starts at (for scroll calculation)
     item_line_starts = {}
     
+    groups = @wrap ? wrap_groups(visible_items, @cols) : []
     visible_items.each_with_index do |item, idx|
       next unless item
       
@@ -1291,10 +1274,10 @@ class HyperListApp
       embedded_lines = item["text"].split("\n")
       text_lines = []
       
-      embedded_lines.each do |embedded_line|
+      embedded_lines.each_with_index do |embedded_line, k|
         if @wrap
           # Wrap each embedded line separately
-          wrapped = wrap_line(embedded_line, @cols, item["level"])
+          wrapped = wrap_line(embedded_line, @cols, item["level"], group: groups[idx], cont: k.positive?)
           text_lines.concat(wrapped)
         else
           text_lines << embedded_line
@@ -1575,11 +1558,10 @@ class HyperListApp
       result = result.sub(/^[0-9][0-9A-Z.]*\s/, identifier.fg(colors["magenta"]))  # Magenta for identifiers
     end
     
-    # Handle the Starter at the beginning (+ or - with space)
-    # Based on hyperlist.vim: '^\(\t\|\*\)*[+-] '. Magenta, the same as a
+    # Handle the Starter at the beginning ("+" with a space). Magenta, the same as a
     # numbering Identifier: both are line-leading structure markers.
-    if result =~ /^[+-]\s/
-      result = result.sub(/^([+-])\s/) { "#{$1}".fg(colors["magenta"]) + " " }
+    if result =~ /^\+\s/
+      result = result.sub(/^\+\s/) { "+".fg(colors["magenta"]) + " " }
     end
     
     # Handle continuation markers (+ at start of indented lines in References section)
@@ -3949,10 +3931,11 @@ class HyperListApp
     A HyperList Item consists of these parts in sequence:
     
     1. #{"Starter".fg("5")} (optional)
-       • Neutral Starter: "+ " or "- " — marks where an Item begins
+       • Neutral Starter: "+ " — marks where an Item begins
        • Identifier: Numbers (1.1.1) or mixed (1A1A) — also unique
-       Required only when an Item spans more than one line; its following
-       lines are indented two spaces beyond the Item's own indent
+       Required when an Item spans more than one line; its following
+       lines are indented two spaces beyond the Item's own indent. Then
+       every Item of its group (same indent, same parent) takes one too
     
     2. #{"Type".fg("5")} (optional)
        • State: S: or |
@@ -4196,15 +4179,17 @@ class HyperListApp
     HyperList
       [1+] HyperList Item
         [?] Starter; OR:
-          Neutral Starter = "+ " or "- "
+          + Neutral Starter = "+ "
             Marks where an Item begins and carries no further meaning
-          Identifier (Numbers: Format = "1.1.1.1", Mixed: Format = "1A1A")
+          + Identifier (Numbers: Format = "1.1.1.1", Mixed: Format = "1A1A")
             Unique, so the Item can be referred to; also acts as a Starter
           + An Item spanning more than one line must have a Starter, and its
             following lines are indented two spaces beyond the Item's own indent
-            One level of indentation is at least three columns wide, so a
-             continuation line can never be read as a child
-            No requirement falls on the other Items at the same indent
+            + One level of indentation is at least three columns wide, so a
+              continuation line can never be read as a child
+            + When one Item in a group spans more than one line, every Item
+              in that group takes a Starter. A group is the Items at the
+              same indent under the same parent
         [?] Type
           OR:
             State = "S:" or "|"
@@ -5884,6 +5869,7 @@ class HyperListApp
     # Track which line number each item starts at (for scroll calculation)
     item_line_starts = {}
     
+    groups = @wrap ? wrap_groups(visible_items, @split_pane.w - 10) : []
     visible_items.each_with_index do |item, idx|
       next unless item
       
@@ -5897,10 +5883,10 @@ class HyperListApp
       embedded_lines = item["text"].split("\n")
       text_lines = []
       
-      embedded_lines.each do |embedded_line|
+      embedded_lines.each_with_index do |embedded_line, k|
         if @wrap
           # Wrap each embedded line separately
-          wrapped = wrap_line(embedded_line, @split_pane.w - 10, item["level"])
+          wrapped = wrap_line(embedded_line, @split_pane.w - 10, item["level"], group: groups[idx], cont: k.positive?)
           text_lines.concat(wrapped)
         else
           text_lines << embedded_line
